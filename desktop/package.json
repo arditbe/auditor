@@ -1,0 +1,23 @@
+{
+  "name": "auditor-desktop",
+  "productName": "Auditor",
+  "version": "0.1.0",
+  "description": "Real-time validation for fine-tuned language models",
+  "main": "main.js",
+  "private": true,
+  "author": "Auditor",
+  "scripts": {
+    "python": "./scripts/build-python.sh",
+    "ui": "cd ../frontend && npm install && npm run build",
+    "prepare-all": "npm run python && npm run ui",
+    "start": "electron .",
+    "dist": "npm run prepare-all && electron-builder",
+    "dist:mac": "npm run prepare-all && electron-builder --mac",
+    "dist:win": "npm run prepare-all && electron-builder --win",
+    "dist:linux": "npm run prepare-all && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  }
+}
