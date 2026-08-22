@@ -59,12 +59,13 @@ export function ModelPicker({
   onAdded,
   onRemoveOwned,
   installError,
+  cloudMode = false,
 }) {
   const [detection, setDetection] = useState(null)
   const [busy, setBusy] = useState(null)
   const [error, setError] = useState(null)
   const [dragging, setDragging] = useState(false)
-  const [showUrl, setShowUrl] = useState(false)
+  const [showUrl, setShowUrl] = useState(cloudMode)
   const [url, setUrl] = useState('')
 
   const folderInput = useRef(null)
@@ -121,7 +122,7 @@ export function ModelPicker({
       }
       setDetection(null)
       setUrl('')
-      setShowUrl(false)
+      setShowUrl(cloudMode)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -138,75 +139,77 @@ export function ModelPicker({
 
   return (
     <>
-      <div
-        className="dropzone"
-        data-dragging={dragging}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          if (e.dataTransfer.files?.length) upload(e.dataTransfer.files)
-        }}
-      >
-        <div className="dropzone-icon">
-          <UploadIcon />
-        </div>
-        <h3>Drop your model here</h3>
-        <p className="dropzone-sub">
-          The folder your training run saved, or a <code>.gguf</code> file
-        </p>
-
-        <div className="dropzone-actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => folderInput.current?.click()}
-            disabled={Boolean(busy)}
-          >
-            {busy === 'uploading' ? 'Uploading…' : 'Choose folder'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => fileInput.current?.click()}
-            disabled={Boolean(busy)}
-          >
-            Choose file
-          </button>
-        </div>
-
-        <p className="dropzone-note">
-          Only the adapter and its config are sent — usually about 20 MB.
-        </p>
-
-        {/* webkitdirectory is how a browser offers a native folder picker. */}
-        <input
-          ref={folderInput}
-          type="file"
-          webkitdirectory=""
-          directory=""
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files?.length) upload(e.target.files)
-            e.target.value = ''
+      {!cloudMode && (
+        <div
+          className="dropzone"
+          data-dragging={dragging}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragging(true)
           }}
-        />
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files?.length) upload(e.target.files)
-            e.target.value = ''
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragging(false)
+            if (e.dataTransfer.files?.length) upload(e.dataTransfer.files)
           }}
-        />
-      </div>
+        >
+          <div className="dropzone-icon">
+            <UploadIcon />
+          </div>
+          <h3>Drop your model here</h3>
+          <p className="dropzone-sub">
+            The folder your training run saved, or a <code>.gguf</code> file
+          </p>
+
+          <div className="dropzone-actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => folderInput.current?.click()}
+              disabled={Boolean(busy)}
+            >
+              {busy === 'uploading' ? 'Uploading…' : 'Choose folder'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => fileInput.current?.click()}
+              disabled={Boolean(busy)}
+            >
+              Choose file
+            </button>
+          </div>
+
+          <p className="dropzone-note">
+            Only the adapter and its config are sent — usually about 20 MB.
+          </p>
+
+          {/* webkitdirectory is how a browser offers a native folder picker. */}
+          <input
+            ref={folderInput}
+            type="file"
+            webkitdirectory=""
+            directory=""
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files?.length) upload(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files?.length) upload(e.target.files)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      )}
 
       {detection && (
         <div className="detected" data-tone={tone}>
@@ -264,7 +267,7 @@ export function ModelPicker({
       )}
 
       {/* Models the person already has, as one-click cards. */}
-      {(owned.length > 0 || installed.length > 0) && (
+      {!cloudMode && (owned.length > 0 || installed.length > 0) && (
         <div style={{ marginTop: 22 }}>
           <div className="eyebrow" style={{ marginBottom: 9 }}>
             Or pick one you already have
@@ -319,14 +322,14 @@ export function ModelPicker({
         </div>
       )}
 
-      {installError && (
+      {!cloudMode && installError && (
         <div className="notice" data-kind="warn" style={{ marginTop: 14 }}>
           {installError}
         </div>
       )}
 
       <div style={{ marginTop: 16 }}>
-        {showUrl ? (
+        {cloudMode || showUrl ? (
           /* Deliberately not a <form>: this sits inside the setup form, and a
              nested form is invalid HTML — the browser lets the inner submit
              escape to the outer one and reloads the page. Enter is wired up by
@@ -362,7 +365,7 @@ export function ModelPicker({
             </div>
             <div className="hint">
               Anything that accepts OpenAI-style <code>/chat/completions</code>{' '}
-              requests. A path on this machine works too.
+              requests.
             </div>
           </div>
         ) : (

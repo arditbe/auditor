@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../lib/api'
+import { api, isCloudDemo } from '../lib/api'
 import { ModelPicker } from './ModelPicker'
 import { JudgePicker } from './JudgePicker'
 import { PurposeField } from './PurposeField'
@@ -31,10 +31,14 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
 
   const load = () =>
     Promise.all([
-      api.targetModels().catch(() => ({ models: [], error: null })),
+      isCloudDemo
+        ? Promise.resolve({ models: [], error: null })
+        : api.targetModels().catch(() => ({ models: [], error: null })),
       api.validators(),
       api.suites(),
-      api.preparedModels().catch(() => ({ models: [] })),
+      isCloudDemo
+        ? Promise.resolve({ models: [] })
+        : api.preparedModels().catch(() => ({ models: [] })),
     ])
 
   useEffect(() => {
@@ -45,17 +49,21 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
         const local = t.models.filter((m) => m.is_local)
         setInstalled(local)
         setInstallError(t.error)
-        setValidators(v.validators)
+        const shownValidators = isCloudDemo
+          ? v.validators.filter((x) => x.provider === 'ai-studio')
+          : v.validators
+        setValidators(shownValidators)
         setSuites(s.suites)
         setOwned(p.models)
         setForm((f) => {
-          const current = v.validators.find((x) => x.key === f.validator_model)
+          const current = shownValidators.find((x) => x.key === f.validator_model)
           const preferredJudge =
             current?.available
               ? f.validator_model
               : (
-                  v.validators.find((x) => x.available && x.requires === 'api_key')?.key ??
-                  v.validators.find((x) => x.available)?.key ??
+                  shownValidators.find((x) => x.available && x.requires === 'api_key')?.key ??
+                  shownValidators.find((x) => x.available)?.key ??
+                  shownValidators[0]?.key ??
                   f.validator_model
                 )
           return {
@@ -77,7 +85,11 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
   const refresh = () =>
     load().then(([t, v, s, p]) => {
       setInstalled(t.models.filter((m) => m.is_local))
-      setValidators(v.validators)
+      setValidators(
+        isCloudDemo
+          ? v.validators.filter((x) => x.provider === 'ai-studio')
+          : v.validators,
+      )
       setOwned(p.models)
     })
 
@@ -125,7 +137,8 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
     form.target_model.replace(/^(ollama|prepared):/, '')
 
   const suiteLabel = suites.find((s) => s.key === form.suite)?.label ?? form.suite
-  const ready = Boolean(form.target_model) && !loading
+  const chosenValidator = validators.find((v) => v.key === form.validator_model)
+  const ready = Boolean(form.target_model) && Boolean(chosenValidator?.available) && !loading
 
   return (
     <form onSubmit={submit}>
@@ -144,7 +157,9 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
           <h2>Choose a model</h2>
         </div>
         <p className="step-sub">
-          Drop the folder your training saved, or pick one already on this machine.
+          {isCloudDemo
+            ? 'Paste the HTTPS URL for a running model server.'
+            : 'Drop the folder your training saved, or pick one already on this machine.'}
         </p>
         <div className="step-body">
           <ModelPicker
@@ -155,6 +170,7 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
             onAdded={onModelAdded}
             onRemoveOwned={removeOwned}
             installError={installError}
+            cloudMode={isCloudDemo}
           />
         </div>
       </section>

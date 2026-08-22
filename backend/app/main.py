@@ -130,6 +130,7 @@ async def health() -> dict:
     return {
         "status": "ok",
         "store": settings.store_backend,
+        "cloud_demo": settings.auditor_cloud_demo,
         "vertex_configured": settings.vertex_configured,
         "project": settings.google_cloud_project or None,
     }
@@ -138,6 +139,9 @@ async def health() -> dict:
 @app.get("/api/models/target")
 async def target_models() -> dict:
     """Models available to audit. Today: whatever Ollama has pulled."""
+    if settings.auditor_cloud_demo:
+        return {"models": [], "error": None}
+
     try:
         models = await list_ollama_models()
     except Exception as exc:  # noqa: BLE001
@@ -233,10 +237,21 @@ class PrepareRequest(BaseModel):
 @app.post("/api/models/detect")
 async def detect_model(body: DetectRequest) -> dict:
     """Identify whatever the user pasted, without changing anything."""
-    try:
-        tags = {m["name"] for m in await list_ollama_models()}
-    except Exception:  # noqa: BLE001 - detection works without Ollama
+    if settings.auditor_cloud_demo and not body.source.strip().startswith(
+        ("http://", "https://")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="This web demo audits model server URLs only.",
+        )
+
+    if settings.auditor_cloud_demo:
         tags = set()
+    else:
+        try:
+            tags = {m["name"] for m in await list_ollama_models()}
+        except Exception:  # noqa: BLE001 - detection works without Ollama
+            tags = set()
 
     detection = inspect_source(body.source, known_ollama_tags=tags)
     payload = detection.model_dump(mode="json")
@@ -268,6 +283,12 @@ async def upload_model(files: list[UploadFile] = File(...)) -> dict:
     Cloud Run, because the files come from the browser rather than from a
     filesystem the server may not share.
     """
+    if settings.auditor_cloud_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="Model uploads are disabled on the Google Cloud web demo.",
+        )
+
     if not files:
         raise HTTPException(status_code=400, detail="No files were sent.")
     if len(files) > MAX_FILES:
@@ -364,10 +385,21 @@ async def prepare_model(body: PrepareRequest) -> dict:
     use takes longer. Both happen before this returns, so the client gets a
     model it can immediately audit.
     """
-    try:
-        tags = {m["name"] for m in await list_ollama_models()}
-    except Exception:  # noqa: BLE001
+    if settings.auditor_cloud_demo and not body.source.strip().startswith(
+        ("http://", "https://")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="This web demo can only audit model server URLs.",
+        )
+
+    if settings.auditor_cloud_demo:
         tags = set()
+    else:
+        try:
+            tags = {m["name"] for m in await list_ollama_models()}
+        except Exception:  # noqa: BLE001
+            tags = set()
 
     detection = inspect_source(body.source, known_ollama_tags=tags)
     name = body.name.strip() or detection.suggested_name
@@ -405,6 +437,13 @@ async def prepare_model(body: PrepareRequest) -> dict:
 
 @app.get("/api/models/prepared")
 async def prepared_models() -> dict:
+    if settings.auditor_cloud_demo:
+        return {
+            "models": [],
+            "mlx_available": False,
+            "can_export_to_ollama": False,
+        }
+
     return {
         "models": [
             {
@@ -424,6 +463,12 @@ async def prepared_models() -> dict:
 
 @app.delete("/api/models/prepared/{name}")
 async def delete_prepared(name: str, delete_files: bool = False) -> dict:
+    if settings.auditor_cloud_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="Prepared models are disabled on the Google Cloud web demo.",
+        )
+
     if not unregister(name, delete_files=delete_files):
         raise HTTPException(status_code=404, detail=f"No model named {name!r}.")
     return {"removed": name}
@@ -436,6 +481,12 @@ async def export_prepared_to_ollama(name: str) -> dict:
     Slow and disk-hungry, but the result is a permanent Ollama model that
     needs no managed server. Offered as an option, never required.
     """
+    if settings.auditor_cloud_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="Prepared models are disabled on the Google Cloud web demo.",
+        )
+
     if not await ollama_available():
         raise HTTPException(
             status_code=422,
@@ -468,6 +519,14 @@ async def upload_validator_context(file: UploadFile = File(...)) -> dict:
 @app.post("/api/runs", status_code=201)
 async def create_run(body: StartRunRequest, request: Request) -> dict:
     _enforce_rate_limit(request)
+    if settings.auditor_cloud_demo and not body.target_model.strip().startswith(
+        ("http://", "https://")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="This web demo can only audit model server URLs.",
+        )
+
     try:
         run = await start_run(RunConfig(**body.model_dump()))
     except KeyError as exc:

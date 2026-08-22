@@ -7,6 +7,7 @@ function resolveBase() {
 const BASE = resolveBase()
 
 export const isDesktop = Boolean(window.auditorDesktop?.isDesktop)
+export const isCloudDemo = import.meta.env.VITE_CLOUD_DEMO === '1'
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {

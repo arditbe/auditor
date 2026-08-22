@@ -233,12 +233,15 @@ rather than discovering it during a demo.
 | Firestore history | with a GCP project | yes |
 
 The deployed service is therefore an auditor **of deployed endpoints**, judged
-by Vertex AI models. The laptop is where local weights get audited, because
-that is where the hardware to run them is.
+by Gemini API-key or Vertex AI models. The laptop is where local weights get
+audited, because that is where the hardware to run them is.
 
 For a demo: run locally to show a real fine-tune being audited at zero cost,
 and show the Cloud Run service and Firestore documents to prove the backend is
-real. `docs/DEPLOY.md` covers both.
+real. Use [`docs/GOOGLE_CLOUD_FREE_TIER.md`](docs/GOOGLE_CLOUD_FREE_TIER.md)
+for the cheapest Cloud Run demo; it builds a URL-only web version with model
+uploads hidden and disabled. Use [`docs/DEPLOY.md`](docs/DEPLOY.md) for the
+full Vertex AI + Firestore version.
 
 An upload of MLX adapters to a deployed instance is detected correctly and then
 says so plainly — *"Your adapters uploaded fine, but this server cannot fuse MLX

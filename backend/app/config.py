@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     store_backend: str = "memory"
     firestore_collection: str = "auditor_runs"
 
+    # Public Cloud Run demo mode: audit HTTPS model endpoints only. This keeps
+    # the free-tier web version away from local filesystem paths and uploads.
+    auditor_cloud_demo: bool = False
+
     # --- Model under test ---
     ollama_host: str = "http://localhost:11434"
     # How long Ollama holds a model in memory after a request. Long enough that
