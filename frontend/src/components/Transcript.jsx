@@ -8,67 +8,48 @@ const DIMENSION_LABEL = {
   coherence: 'coherence',
 }
 
-/* A rambling model can emit thousands of words. Clamp it so one bad answer
- * cannot push the rest of the transcript off the screen mid-demo — the length
- * is still reported, and the full text is one click away. */
-const CLAMP_CHARS = 520
+/* A rambling model can emit thousands of words. Clamping keeps one bad answer
+ * from pushing the rest of the transcript off screen mid-demo; the full text
+ * is one click away and the length is stated. */
+const CLAMP = 460
 
 function Answer({ text }) {
-  const [expanded, setExpanded] = useState(false)
-  const long = text.length > CLAMP_CHARS
-
-  if (!long) return <p className="said">{text}</p>
+  const [open, setOpen] = useState(false)
+  const long = text.length > CLAMP
 
   return (
     <>
-      <p className={`said${expanded ? '' : ' clamped'}`}>{text}</p>
-      <button
-        type="button"
-        className="link-btn"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        {expanded
-          ? 'Show less'
-          : `Show all ${text.length.toLocaleString()} characters`}
-      </button>
+      <div className={`qa-answer${long && !open ? ' clamped' : ''}`}>{text}</div>
+      {long && (
+        <button className="link" style={{ marginTop: 8 }} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Show less' : `Show all ${text.length.toLocaleString()} characters`}
+        </button>
+      )}
     </>
   )
 }
 
-function pad(n) {
-  return String(n + 1).padStart(2, '0')
-}
-
-function ScoreList({ scores }) {
-  const entries = Object.entries(scores ?? {})
-  if (!entries.length) return null
-  return (
-    <span className="verdict-scores">
-      {entries
-        .map(([k, v]) => `${DIMENSION_LABEL[k] ?? k} ${Number(v).toFixed(0)}/5`)
-        .join('  ·  ')}
-    </span>
-  )
-}
-
 function Verdict({ evaluation, validatorLabel }) {
+  const scores = Object.entries(evaluation.scores ?? {})
   return (
     <div className="verdict" data-v={evaluation.verdict}>
       <div className="verdict-head">
-        <span className="verdict-label">{evaluation.verdict}</span>
-        <ScoreList scores={evaluation.scores} />
-        {validatorLabel && (
-          <span className="judged-by">judged by {validatorLabel}</span>
+        <span className="verdict-badge">{evaluation.verdict}</span>
+        {scores.length > 0 && (
+          <span className="verdict-scores">
+            {scores
+              .map(([k, v]) => `${DIMENSION_LABEL[k] ?? k} ${Number(v).toFixed(0)}/5`)
+              .join('  ·  ')}
+          </span>
         )}
+        {validatorLabel && <span className="judged-by">judged by {validatorLabel}</span>}
       </div>
-      {evaluation.reasoning && (
-        <p className="verdict-reason">{evaluation.reasoning}</p>
-      )}
+      {evaluation.reasoning && <p className="verdict-why">{evaluation.reasoning}</p>}
       {evaluation.flags?.length > 0 && (
         <div className="verdict-flags">
-          {evaluation.flags.map((flag) => (
-            <span className="flag" key={flag}>
-              {flag}
+          {evaluation.flags.map((f) => (
+            <span className="flag" key={f}>
+              {f}
             </span>
           ))}
         </div>
@@ -77,56 +58,55 @@ function Verdict({ evaluation, validatorLabel }) {
   )
 }
 
-function ProbeEntry({ probe, response, evaluation, isActive, validatorLabel }) {
+function Exchange({ probe, response, evaluation, isActive, validatorLabel }) {
   return (
-    <article className="probe">
-      <header className="probe-head">
-        <span className="probe-index mono">PROBE {pad(probe.index)}</span>
-        <span className="chip">{DIMENSION_LABEL[probe.dimension] ?? probe.dimension}</span>
-        <span className="chip">{probe.difficulty}</span>
-        {probe.is_trap && <span className="chip chip-trap">trap</span>}
+    <article className="exchange">
+      <header className="exchange-head">
+        <span className="exchange-n">Q{String(probe.index + 1).padStart(2, '0')}</span>
+        <span className="pill">{DIMENSION_LABEL[probe.dimension] ?? probe.dimension}</span>
+        <span className="pill">{probe.difficulty}</span>
+        {probe.is_trap && <span className="pill pill-trap">trap</span>}
       </header>
 
-      <div className="speech question">
-        <span className="who">Auditor asks</span>
-        <p className="said">{probe.question}</p>
-      </div>
+      <div className="qa">
+        <div className="qa-label">Auditor asks</div>
+        <p className="qa-question">{probe.question}</p>
 
-      {response ? (
-        <div className="speech answer">
-          <span className="who">Model answers</span>
-          {response.error ? (
-            <p className="said tone-fail">No response — {response.error}</p>
-          ) : response.text ? (
-            <Answer text={response.text} />
-          ) : (
-            <p className="said tone-fail">(empty response)</p>
-          )}
-          <div className="meta">
-            {response.latency_ms} ms
-            {response.completion_tokens != null &&
-              ` · ${response.completion_tokens} tokens out`}
-          </div>
-        </div>
-      ) : (
-        isActive && (
-          <div className="speech answer">
-            <span className="who">Model answers</span>
-            <div className="awaiting">
-              <span className="dot" style={{ animation: 'pulse 1.6s ease-in-out infinite' }} />
+        <div className="qa-label">The model answers</div>
+        {response ? (
+          <>
+            {response.error ? (
+              <div className="qa-answer tone-fail">No response — {response.error}</div>
+            ) : response.text ? (
+              <Answer text={response.text} />
+            ) : (
+              <div className="qa-answer tone-fail">(empty response)</div>
+            )}
+            <div className="qa-meta">
+              {response.latency_ms} ms
+              {response.completion_tokens != null &&
+                ` · ${response.completion_tokens} tokens`}
+            </div>
+          </>
+        ) : (
+          isActive && (
+            <div className="waiting">
+              <span className="dot dot-live" />
               waiting for the model…
             </div>
-          </div>
-        )
-      )}
+          )
+        )}
+      </div>
 
       {evaluation ? (
         <Verdict evaluation={evaluation} validatorLabel={validatorLabel} />
       ) : (
         response && (
-          <div className="awaiting" style={{ paddingLeft: 0 }}>
-            <span className="dot" style={{ animation: 'pulse 1.6s ease-in-out infinite' }} />
-            scoring…
+          <div className="qa" style={{ paddingTop: 0 }}>
+            <div className="waiting">
+              <span className="dot dot-live" />
+              scoring…
+            </div>
           </div>
         )
       )}
@@ -139,13 +119,13 @@ export function Transcript({ run, validatorLabel }) {
 
   if (!probes.length) {
     return (
-      <div className="panel empty">
-        <span className="eyebrow">Transcript</span>
-        {status === 'running' ? (
-          <p>The agent is designing a probe set for this model…</p>
-        ) : (
-          <p>Probes will appear here as the agent writes them.</p>
-        )}
+      <div className="card empty">
+        <h3>{status === 'running' ? 'Writing the questions' : 'Nothing yet'}</h3>
+        <p>
+          {status === 'running'
+            ? 'The judge is designing a test for this model. This takes a moment.'
+            : 'Questions will appear here as the audit runs.'}
+        </p>
       </div>
     )
   }
@@ -160,7 +140,7 @@ export function Transcript({ run, validatorLabel }) {
   return (
     <div className="transcript">
       {visible.map((probe) => (
-        <ProbeEntry
+        <Exchange
           key={probe.probe_id}
           probe={probe}
           response={responses[probe.probe_id]}

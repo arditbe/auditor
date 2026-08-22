@@ -1,79 +1,38 @@
 const DIMENSIONS = [
-  ['accuracy', 'accuracy'],
-  ['hallucination_resistance', 'hallucination'],
-  ['instruction_following', 'instruction'],
-  ['safety', 'safety'],
-  ['coherence', 'coherence'],
+  ['accuracy', 'Accuracy'],
+  ['hallucination_resistance', 'Makes things up'],
+  ['instruction_following', 'Follows instructions'],
+  ['safety', 'Safety'],
+  ['coherence', 'Coherence'],
 ]
 
 const MAX = 5
 
-export function toneFor(score /* 0-5 */) {
+export function toneFor(score) {
   if (score >= 4) return 'pass'
   if (score > 2) return 'warn'
   return 'fail'
 }
 
 /**
- * The instrument. Five channels, one per scoring dimension.
+ * Where the model is strong and where it is weak.
  *
- * A dimension no probe has tested reads as a dash, not a zero — the meter
- * refuses to show a measurement it has not taken.
+ * A dimension no probe has tested reads "not tested", never 0 — reporting a
+ * measurement you have not taken is the one thing a scorecard must not do.
  */
 export function MeterBridge({ dimensions }) {
   const readings = dimensions ?? {}
-  const testedRows = DIMENSIONS
-    .map(([key, label]) => {
-      const raw = readings[key]
-      return typeof raw === 'number'
-        ? { dimension: key, label, score: raw, out_of: MAX }
-        : null
-    })
-    .filter(Boolean)
-
-  const downloadReadings = () => {
-    if (!testedRows.length) return
-    const rows = [
-      ['dimension', 'label', 'score', 'out_of'],
-      ...testedRows.map((row) => [
-        row.dimension,
-        row.label,
-        row.score.toFixed(2),
-        String(row.out_of),
-      ]),
-    ]
-    const csv = rows
-      .map((row) =>
-        row
-          .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
-          .join(','),
-      )
-      .join('\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `auditor-dimension-readings-${Date.now()}.csv`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-  }
 
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <span className="eyebrow">Dimension readings</span>
-        <button
-          className="link-btn download-readings"
-          type="button"
-          onClick={downloadReadings}
-          disabled={!testedRows.length}
-        >
-          Download CSV
-        </button>
+    <div className="card">
+      <div className="card-head">
+        <h3>Breakdown</h3>
+        <span className="eyebrow" style={{ marginLeft: 'auto' }}>
+          of 5
+        </span>
       </div>
-      <div className="panel-body">
-        <div className="meters">
+      <div className="card-body">
+        <div className="dims">
           {DIMENSIONS.map(([key, label]) => {
             const raw = readings[key]
             const tested = typeof raw === 'number'
@@ -81,24 +40,24 @@ export function MeterBridge({ dimensions }) {
             const tone = tested ? toneFor(value) : 'idle'
 
             return (
-              <div className="meter" key={key} data-untested={!tested}>
-                <div className="meter-top">
-                  <span className="meter-name">{label}</span>
-                  <span className={`meter-value tone-${tone}`}>
+              <div className="dim" key={key} data-untested={!tested}>
+                <div className="dim-top">
+                  <span className="dim-name">{label}</span>
+                  <span className={`dim-score tone-${tone}`}>
                     {tested ? value.toFixed(2) : 'not tested'}
                   </span>
                 </div>
                 <div
-                  className="meter-track"
+                  className="dim-track"
                   role="meter"
-                  aria-label={`${label} score`}
+                  aria-label={label}
                   aria-valuenow={tested ? value : undefined}
                   aria-valuemin={0}
                   aria-valuemax={MAX}
                   aria-valuetext={tested ? `${value} of ${MAX}` : 'not tested'}
                 >
                   <div
-                    className="meter-fill"
+                    className="dim-fill"
                     style={{
                       transform: `scaleX(${tested ? value / MAX : 0})`,
                       backgroundColor: tested ? `var(--${tone})` : 'transparent',

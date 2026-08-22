@@ -2,17 +2,17 @@ import { useState } from 'react'
 import { api } from '../lib/api'
 
 /**
- * Repoints a live run at a different validator.
+ * Repoints a live audit at a different judge.
  *
- * Available mid-run on purpose: the pitch is that you can start free on local
- * Gemma and escalate to Gemini when a verdict looks wrong, without losing the
- * probes already scored.
+ * Available mid-run on purpose: start free on local Gemma, and when a verdict
+ * looks wrong, escalate the remaining questions to Gemini without losing the
+ * ones already scored.
  */
 export function ValidatorSwitch({ runId, current, validators, active }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState(null)
 
-  const currentSpec = validators.find((v) => v.key === current)
+  const spec = validators.find((v) => v.key === current)
 
   const change = async (e) => {
     const next = e.target.value
@@ -29,43 +29,41 @@ export function ValidatorSwitch({ runId, current, validators, active }) {
   }
 
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <span className="eyebrow">Validator</span>
+    <div className="card">
+      <div className="card-head">
+        <h3>Judge</h3>
+        {spec?.cost === 'free' && (
+          <span className="pill pill-free" style={{ marginLeft: 'auto' }}>
+            free
+          </span>
+        )}
       </div>
-      <div className="panel-body">
-        <div className="switcher">
-          <div className="current">
-            {currentSpec?.label ?? current ?? '—'}
-            {currentSpec && (
-              <span className="cost" data-cost={currentSpec.cost}>
-                {currentSpec.cost}
-              </span>
-            )}
-          </div>
-
-          {active && (
-            <>
-              <select value={current ?? ''} onChange={change} disabled={pending}>
-                {validators.map((v) => (
-                  <option key={v.key} value={v.key} disabled={!v.available}>
-                    {v.label}
-                    {!v.available ? ' (needs GOOGLE_CLOUD_PROJECT)' : ''}
-                  </option>
-                ))}
-              </select>
-              <div className="hint mono" style={{ fontSize: 11, color: 'var(--slate)' }}>
-                Switching applies to the probes that have not been scored yet.
-              </div>
-            </>
-          )}
-
-          {error && (
-            <div className="notice" data-kind="error">
-              {error}
+      <div className="card-body">
+        {active ? (
+          <div className="field">
+            <select value={current ?? ''} onChange={change} disabled={pending}>
+              {validators.map((v) => (
+                <option key={v.key} value={v.key} disabled={!v.available}>
+                  {v.label}
+                  {!v.available ? ' — unavailable' : ''}
+                </option>
+              ))}
+            </select>
+            <div className="hint">
+              Switching applies to the questions not yet scored.
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            {spec?.label ?? current ?? '—'}
+          </div>
+        )}
+
+        {error && (
+          <div className="notice" data-kind="error" style={{ marginTop: 10 }}>
+            {error}
+          </div>
+        )}
       </div>
     </div>
   )

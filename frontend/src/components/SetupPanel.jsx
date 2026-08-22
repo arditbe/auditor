@@ -1,22 +1,24 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import { AddModel } from './AddModel'
-import { PreparedModels } from './PreparedModels'
+import { ModelPicker } from './ModelPicker'
+import { JudgePicker } from './JudgePicker'
+import { PurposeField } from './PurposeField'
 
-function formatSize(bytes) {
-  if (!bytes) return null
-  return `${(bytes / 1e9).toFixed(1)} GB`
-}
-
-export function SetupPanel({ onStarted, disabled }) {
-  const [targets, setTargets] = useState([])
-  const [targetError, setTargetError] = useState(null)
+/**
+ * The setup flow.
+ *
+ * Three numbered steps, each one decision. Everything that is not a decision
+ * — probe count, suite, what the model was tuned for — is folded into step
+ * three, which has a sensible default and can be ignored entirely.
+ */
+export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
+  const [installed, setInstalled] = useState([])
+  const [owned, setOwned] = useState([])
   const [validators, setValidators] = useState([])
   const [suites, setSuites] = useState([])
+  const [installError, setInstallError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [uploadingContext, setUploadingContext] = useState(false)
-  const [contextFile, setContextFile] = useState(null)
   const [error, setError] = useState(null)
 
   const [form, setForm] = useState({
@@ -27,68 +29,76 @@ export function SetupPanel({ onStarted, disabled }) {
     model_purpose: '',
   })
 
-  const [prepared, setPrepared] = useState([])
-  const [canExport, setCanExport] = useState(false)
-  const [addingModel, setAddingModel] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
+  const load = () =>
     Promise.all([
-      api.targetModels(),
+      api.targetModels().catch(() => ({ models: [], error: null })),
       api.validators(),
       api.suites(),
       api.preparedModels().catch(() => ({ models: [] })),
     ])
+
+  useEffect(() => {
+    let cancelled = false
+    load()
       .then(([t, v, s, p]) => {
         if (cancelled) return
         const local = t.models.filter((m) => m.is_local)
-        setTargets(local)
-        setTargetError(t.error)
+        setInstalled(local)
+        setInstallError(t.error)
         setValidators(v.validators)
         setSuites(s.suites)
-        setPrepared(p.models)
-        setCanExport(Boolean(p.can_export_to_ollama))
-        // Prefer a model the user prepared themselves -- if they went to the
-        // trouble of adding one, that is what they came to audit.
-        const preferred = p.models[0]?.spec ?? local[0]?.spec
-        if (preferred) {
-          setForm((f) => ({ ...f, target_model: preferred }))
-        } else {
-          // Nothing to choose from. An empty dropdown is a dead end, so open
-          // the one control that can actually get them unstuck.
-          setAddingModel(true)
-        }
+        setOwned(p.models)
+        setForm((f) => {
+          const current = v.validators.find((x) => x.key === f.validator_model)
+          const preferredJudge =
+            current?.available
+              ? f.validator_model
+              : (
+                  v.validators.find((x) => x.available && x.requires === 'api_key')?.key ??
+                  v.validators.find((x) => x.available)?.key ??
+                  f.validator_model
+                )
+          return {
+            ...f,
+            // Prefer a model the person prepared themselves: if they went to the
+            // trouble of adding one, that is what they came to audit.
+            target_model: f.target_model || p.models[0]?.spec || local[0]?.spec || '',
+            validator_model: preferredJudge,
+          }
+        })
       })
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadKey])
 
-  const refreshModels = () => {
-    Promise.all([
-      api.preparedModels().catch(() => ({ models: [] })),
-      api.targetModels().catch(() => ({ models: [] })),
-    ]).then(([p, t]) => {
-      setPrepared(p.models)
-      setCanExport(Boolean(p.can_export_to_ollama))
-      setTargets(t.models.filter((m) => m.is_local))
+  const refresh = () =>
+    load().then(([t, v, s, p]) => {
+      setInstalled(t.models.filter((m) => m.is_local))
+      setValidators(v.validators)
+      setOwned(p.models)
     })
-  }
 
-  /* A newly added model becomes the selection immediately -- the person just
-   * told us this is the one they care about. */
   const onModelAdded = (model) => {
-    setPrepared((list) =>
+    setOwned((list) =>
       list.some((m) => m.spec === model.spec) ? list : [model, ...list],
     )
     setForm((f) => ({ ...f, target_model: model.spec }))
-    setAddingModel(false)
-    api
-      .targetModels()
-      .then((t) => setTargets(t.models.filter((m) => m.is_local)))
-      .catch(() => {})
+    refresh()
+  }
+
+  const removeOwned = async (name) => {
+    try {
+      await api.deletePrepared(name, true)
+      setForm((f) =>
+        f.target_model === `prepared:${name}` ? { ...f, target_model: '' } : f,
+      )
+      refresh()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const set = (key) => (e) => {
@@ -105,183 +115,133 @@ export function SetupPanel({ onStarted, disabled }) {
       onStarted(run_id)
     } catch (err) {
       setError(err.message)
-    } finally {
       setSubmitting(false)
     }
   }
 
-  const uploadContext = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadingContext(true)
-    setError(null)
-    try {
-      const result = await api.uploadValidatorContext(file)
-      setContextFile(result.context)
-      setForm((f) => ({ ...f, model_purpose: result.context.text }))
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setUploadingContext(false)
-      e.target.value = ''
-    }
-  }
+  const chosenModel =
+    owned.find((m) => m.spec === form.target_model)?.name ??
+    installed.find((m) => m.spec === form.target_model)?.name ??
+    form.target_model.replace(/^(ollama|prepared):/, '')
 
-  const chosenValidator = validators.find((v) => v.key === form.validator_model)
-  const ready = form.target_model && !loading && !disabled
+  const suiteLabel = suites.find((s) => s.key === form.suite)?.label ?? form.suite
+  const ready = Boolean(form.target_model) && !loading
 
   return (
-    <form className="panel setup" onSubmit={submit}>
-      <h2>Audit a model</h2>
-      <p className="lede">
-        Auditor writes its own test questions, puts them to your model, and has a
-        second model score every answer against the criteria it wrote. Nothing is
-        pre-scripted.
-      </p>
-
-      {targetError && (
-        <div className="notice" data-kind="error" style={{ marginBottom: 18 }}>
-          {targetError}
-        </div>
-      )}
-
-      <div className="field">
-        <label htmlFor="target">Model to audit</label>
-        <select
-          id="target"
-          value={form.target_model}
-          onChange={set('target_model')}
-          disabled={loading || (!targets.length && !prepared.length)}
-        >
-          {!targets.length && !prepared.length && (
-            <option value="">No models yet — add yours below</option>
-          )}
-          {prepared.length > 0 && (
-            <optgroup label="Your models">
-              {prepared.map((m) => (
-                <option key={m.spec} value={m.spec}>
-                  {m.name}
-                  {m.base_model ? ` · fine-tune of ${m.base_model}` : ''}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {targets.length > 0 && (
-            <optgroup label="Installed with Ollama">
-              {targets.map((m) => (
-                <option key={m.spec} value={m.spec}>
-                  {m.name}
-                  {m.parameter_size ? ` · ${m.parameter_size}` : ''}
-                  {formatSize(m.size_bytes) ? ` · ${formatSize(m.size_bytes)}` : ''}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-
-        <PreparedModels
-          models={prepared}
-          onChanged={refreshModels}
-          canExport={canExport}
-        />
-
-        {addingModel ? (
-          <AddModel onAdded={onModelAdded} />
-        ) : (
-          <button
-            type="button"
-            className="link-btn"
-            style={{ marginLeft: 0 }}
-            onClick={() => setAddingModel(true)}
-          >
-            Trained your own model? Add it →
-          </button>
-        )}
-
-        <div className="hint" style={{ display: addingModel ? 'none' : undefined }}>
-          Everything here runs on this machine.
-        </div>
+    <form onSubmit={submit}>
+      <div className="hero">
+        <h1>What should we audit?</h1>
+        <p>
+          Auditor writes its own test questions, puts them to your model, and has
+          a second model score every answer against criteria it wrote first.
+          Nothing is pre-scripted.
+        </p>
       </div>
 
-      <div className="field">
-        <label htmlFor="validator">Validator</label>
-        <select
-          id="validator"
-          value={form.validator_model}
-          onChange={set('validator_model')}
-          disabled={loading}
-        >
-          {validators.map((v) => (
-            <option key={v.key} value={v.key} disabled={!v.available}>
-              {v.label}
-              {v.cost === 'free' ? ' — free' : ''}
-              {!v.available ? ' (needs GOOGLE_CLOUD_PROJECT)' : ''}
-            </option>
-          ))}
-        </select>
-        <div className="hint">{chosenValidator?.blurb}</div>
-      </div>
-
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="suite">Suite</label>
-          <select id="suite" value={form.suite} onChange={set('suite')} disabled={loading}>
-            {suites.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+      <section className="step">
+        <div className="step-head">
+          <span className="step-num">1</span>
+          <h2>Choose a model</h2>
         </div>
-        <div className="field">
-          <label htmlFor="probes">Probes</label>
-          <input
-            id="probes"
-            type="number"
-            min="1"
-            max="25"
-            value={form.num_probes}
-            onChange={set('num_probes')}
+        <p className="step-sub">
+          Drop the folder your training saved, or pick one already on this machine.
+        </p>
+        <div className="step-body">
+          <ModelPicker
+            installed={installed}
+            owned={owned}
+            selected={form.target_model}
+            onSelect={(spec) => setForm((f) => ({ ...f, target_model: spec }))}
+            onAdded={onModelAdded}
+            onRemoveOwned={removeOwned}
+            installError={installError}
           />
-          <div className="hint">6 keeps a live demo under two minutes.</div>
         </div>
-      </div>
+      </section>
 
-      <div className="field">
-        <label htmlFor="purpose">What was this model tuned for? (optional)</label>
-        <textarea
-          id="purpose"
-          rows="5"
-          placeholder="Upload a CSV/text file, or type a short description."
-          value={form.model_purpose}
-          onChange={set('model_purpose')}
-        />
-        <div className="button-row context-upload-row">
-          <label className="btn btn-quiet btn-small file-button">
-            {uploadingContext ? 'Reading file...' : 'Upload context file'}
-            <input type="file" onChange={uploadContext} />
-          </label>
-          {contextFile && (
-            <span className="context-file">
-              {contextFile.filename} · {contextFile.chars} chars
-              {contextFile.truncated ? ' · sampled' : ''}
-            </span>
-          )}
+      <section className="step">
+        <div className="step-head">
+          <span className="step-num">2</span>
+          <h2>Choose a judge</h2>
         </div>
-        <div className="hint">
-          The validator uses this file text to design probes instead of relying on a typed description.
+        <p className="step-sub">
+          The model that scores the answers. You can switch mid-audit.
+        </p>
+        <div className="step-body">
+          <JudgePicker
+            validators={validators}
+            selected={form.validator_model}
+            onSelect={(key) => setForm((f) => ({ ...f, validator_model: key }))}
+            onNeedKey={onOpenSettings}
+          />
         </div>
-      </div>
+      </section>
+
+      <section className="step">
+        <div className="step-head">
+          <span className="step-num">3</span>
+          <h2>Fine-tune the test</h2>
+        </div>
+        <p className="step-sub">Optional — the defaults work.</p>
+        <div className="step-body">
+          <details className="disclosure">
+            <summary>
+              Test settings
+              <span className="summary-note">
+                {form.num_probes} probes · {suiteLabel}
+              </span>
+            </summary>
+            <div className="disclosure-body">
+              <div className="field-row">
+                <div className="field">
+                  <label htmlFor="suite">What to focus on</label>
+                  <select id="suite" value={form.suite} onChange={set('suite')}>
+                    {suites.map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="probes">Number of questions</label>
+                  <input
+                    id="probes"
+                    type="number"
+                    min="1"
+                    max="25"
+                    value={form.num_probes}
+                    onChange={set('num_probes')}
+                  />
+                  <div className="hint">6 keeps a run under two minutes.</div>
+                </div>
+              </div>
+
+              <PurposeField
+                value={form.model_purpose}
+                onChange={(text) => setForm((f) => ({ ...f, model_purpose: text }))}
+              />
+            </div>
+          </details>
+        </div>
+      </section>
 
       {error && (
-        <div className="notice" data-kind="error" style={{ marginBottom: 16 }}>
+        <div className="notice" data-kind="error" style={{ marginBottom: 18 }}>
           {error}
         </div>
       )}
 
-      <button className="btn" type="submit" disabled={!ready || submitting}>
-        {submitting ? 'Starting…' : 'Start audit'}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <button className="btn btn-lg" type="submit" disabled={!ready || submitting}>
+          {submitting ? 'Starting…' : 'Start audit'}
+        </button>
+        <span style={{ color: 'var(--muted)', fontSize: 14 }}>
+          {ready
+            ? `${chosenModel} · ${form.num_probes} questions`
+            : 'Choose a model to begin'}
+        </span>
+      </div>
     </form>
   )
 }
