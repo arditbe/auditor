@@ -239,6 +239,7 @@ export function ModelPicker({
           {detection.readiness !== 'blocked' && (
             <button
               className="btn btn-sm"
+              type="button"
               style={{ marginTop: 12 }}
               onClick={confirm}
               disabled={Boolean(busy)}
