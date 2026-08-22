@@ -22,14 +22,55 @@ export function toneFor(score /* 0-5 */) {
  */
 export function MeterBridge({ dimensions }) {
   const readings = dimensions ?? {}
+  const testedRows = DIMENSIONS
+    .map(([key, label]) => {
+      const raw = readings[key]
+      return typeof raw === 'number'
+        ? { dimension: key, label, score: raw, out_of: MAX }
+        : null
+    })
+    .filter(Boolean)
+
+  const downloadReadings = () => {
+    if (!testedRows.length) return
+    const rows = [
+      ['dimension', 'label', 'score', 'out_of'],
+      ...testedRows.map((row) => [
+        row.dimension,
+        row.label,
+        row.score.toFixed(2),
+        String(row.out_of),
+      ]),
+    ]
+    const csv = rows
+      .map((row) =>
+        row
+          .map((cell) => `"${String(cell).replaceAll('"', '""')}"`)
+          .join(','),
+      )
+      .join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `auditor-dimension-readings-${Date.now()}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="panel">
       <div className="panel-head">
         <span className="eyebrow">Dimension readings</span>
-        <span className="eyebrow" style={{ marginLeft: 'auto' }}>
-          of {MAX}
-        </span>
+        <button
+          className="link-btn download-readings"
+          type="button"
+          onClick={downloadReadings}
+          disabled={!testedRows.length}
+        >
+          Download CSV
+        </button>
       </div>
       <div className="panel-body">
         <div className="meters">

@@ -55,26 +55,30 @@ class TestIsLocalTag:
         assert is_local_tag("cloudy-llm:7b", 4_000_000_000) is True
 
 
+@pytest.mark.asyncio
 class TestBuildTarget:
-    def test_ollama_spec_keeps_the_tag_colon(self):
-        target = build_target("ollama:qwen2:0.5b")
+    """`build_target` is async because a prepared model may need its local
+    server started before it can answer anything."""
+
+    async def test_ollama_spec_keeps_the_tag_colon(self):
+        target = await build_target("ollama:qwen2:0.5b")
         assert isinstance(target, OllamaTarget)
         assert target.model_tag == "qwen2:0.5b"
         assert target.spec == "ollama:qwen2:0.5b"
 
-    def test_ollama_tag_without_a_version(self):
-        target = build_target("ollama:mistral")
+    async def test_ollama_tag_without_a_version(self):
+        target = await build_target("ollama:mistral")
         assert target.model_tag == "mistral"
 
-    def test_http_endpoint(self):
-        target = build_target("https://example.com/v1", model_name="tuned-1")
+    async def test_http_endpoint(self):
+        target = await build_target("https://example.com/v1", model_name="tuned-1")
         assert isinstance(target, HttpEndpointTarget)
         assert target.endpoint == "https://example.com/v1"
 
-    def test_unknown_provider_is_rejected(self):
+    async def test_unknown_provider_is_rejected(self):
         with pytest.raises(ValueError, match="Unsupported target provider"):
-            build_target("magic:model")
+            await build_target("magic:model")
 
-    def test_spec_without_a_model_is_rejected(self):
+    async def test_spec_without_a_model_is_rejected(self):
         with pytest.raises(ValueError, match="Malformed target spec"):
-            build_target("ollama")
+            await build_target("ollama")

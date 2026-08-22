@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from collections import defaultdict, deque
 
@@ -25,7 +26,31 @@ from .context_upload import extract_uploaded_context
 from .events import STREAM_END, EventType, bus
 from .models.schemas import RunConfig
 from .orchestrator import ACTIVE, MAX_PROBES, start_run
-from .providers import list_ollama_models, list_validators
+from .providers import (
+    MAX_FILES,
+    MAX_UPLOAD_BYTES,
+    GgufImportError,
+    PrepareError,
+    export_to_ollama,
+    find_gguf_converter,
+    fuse_adapters,
+    import_gguf,
+    inspect_source,
+    is_useful,
+    list_ollama_models,
+    list_prepared,
+    list_validators,
+    mlx_available,
+    new_upload_dir,
+    ollama_available,
+    prune_uploads,
+    register_folder,
+    safe_component,
+    safe_relative_path,
+    stop_all_servers,
+    unregister,
+    UploadError,
+)
 from .store import get_store
 
 logging.basicConfig(
@@ -160,11 +185,6 @@ def _mask(secret: str) -> str:
 @app.get("/api/settings")
 async def get_settings() -> dict:
     """What is configured. Never returns the key itself."""
-    try:
-        await list_ollama_models()
-        ollama_is_available = True
-    except Exception:  # noqa: BLE001
-        ollama_is_available = False
     return {
         "google_api_key_set": settings.api_key_configured,
         "google_api_key_hint": (
@@ -172,7 +192,8 @@ async def get_settings() -> dict:
         ),
         "vertex_configured": settings.vertex_configured,
         "ollama_host": settings.ollama_host,
-        "ollama_available": ollama_is_available,
+        "mlx_available": mlx_available(),
+        "ollama_available": await ollama_available(),
     }
 
 
@@ -193,6 +214,238 @@ async def set_google_api_key(body: ApiKeyRequest) -> dict:
         "google_api_key_set": bool(key),
         "google_api_key_hint": _mask(key) if key else None,
     }
+
+
+# --------------------------------------------------------------------------
+# bringing your own model
+# --------------------------------------------------------------------------
+
+class DetectRequest(BaseModel):
+    source: str
+
+
+class PrepareRequest(BaseModel):
+    source: str
+    #: What to call it in the dropdown. Defaults to the detected suggestion.
+    name: str = ""
+
+
+@app.post("/api/models/detect")
+async def detect_model(body: DetectRequest) -> dict:
+    """Identify whatever the user pasted, without changing anything."""
+    try:
+        tags = {m["name"] for m in await list_ollama_models()}
+    except Exception:  # noqa: BLE001 - detection works without Ollama
+        tags = set()
+
+    detection = inspect_source(body.source, known_ollama_tags=tags)
+    payload = detection.model_dump(mode="json")
+
+    # Tell the UI up front if the action it is about to offer cannot work.
+    if detection.kind == "mlx_adapters" and not mlx_available():
+        payload["readiness"] = "blocked"
+        payload["detail"] = (
+            "Auditor found your adapters, but mlx-lm is not installed in its "
+            "environment. Install it with: pip install mlx-lm"
+        )
+        payload["action_label"] = None
+    elif detection.kind == "gguf_file" and not await ollama_available():
+        payload["readiness"] = "blocked"
+        payload["detail"] = (
+            "Auditor found the file, but Ollama is not installed. Get it from "
+            "ollama.com, then try again."
+        )
+        payload["action_label"] = None
+
+    return payload
+
+
+@app.post("/api/models/upload", status_code=201)
+async def upload_model(files: list[UploadFile] = File(...)) -> dict:
+    """Receive a model folder picked in the browser, then identify it.
+
+    This is the path that works whether Auditor runs on your laptop or on
+    Cloud Run, because the files come from the browser rather than from a
+    filesystem the server may not share.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files were sent.")
+    if len(files) > MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That folder has too many files (limit {MAX_FILES}). "
+                   "Pick the folder containing adapter_config.json.",
+        )
+
+    prune_uploads()
+    folder = new_upload_dir()
+    total = 0
+    stored = 0
+    origin_folder = ""
+
+    try:
+        for upload in files:
+            try:
+                relative = safe_relative_path(
+                    upload.filename or "file"
+                )
+            except UploadError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            if not is_useful(relative):
+                continue
+
+            if not origin_folder:
+                raw_parts = (upload.filename or "").replace("\\", "/").split("/")
+                if len(raw_parts) > 1:
+                    origin_folder = safe_component(raw_parts[0])
+
+            destination = folder / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            with destination.open("wb") as sink:
+                # Streamed in chunks so a large file cannot balloon memory,
+                # and the size cap is enforced mid-transfer rather than after.
+                while chunk := await upload.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                f"That is over the "
+                                f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit. "
+                                "Upload only the adapter folder, not the base "
+                                "model."
+                            ),
+                        )
+                    sink.write(chunk)
+            stored += 1
+
+        if stored == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "None of those files look like a model. Pick the folder "
+                    "your training run saved, containing adapter_config.json."
+                ),
+            )
+
+        detection = inspect_source(str(folder))
+        payload = detection.model_dump(mode="json")
+        payload["uploaded_bytes"] = total
+        payload["uploaded_files"] = stored
+
+        # Name it after the folder the person picked, not the upload id. The
+        # picker sends "adapters_v2/adapters.safetensors"; that first component
+        # is the only human-meaningful name we get.
+        if origin_folder:
+            payload["suggested_name"] = origin_folder
+
+        if detection.kind == "mlx_adapters" and not mlx_available():
+            payload["readiness"] = "blocked"
+            payload["detail"] = (
+                "Your adapters uploaded fine, but this server cannot fuse MLX "
+                "models -- that needs Apple Silicon. Run Auditor locally to "
+                "audit this model, or point it at a deployed endpoint."
+            )
+            payload["action_label"] = None
+
+        return payload
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+
+
+@app.post("/api/models/prepare", status_code=201)
+async def prepare_model(body: PrepareRequest) -> dict:
+    """Do whatever it takes to make the detected source auditable.
+
+    Fusing a 7B adapter takes a few seconds; loading it into memory on first
+    use takes longer. Both happen before this returns, so the client gets a
+    model it can immediately audit.
+    """
+    try:
+        tags = {m["name"] for m in await list_ollama_models()}
+    except Exception:  # noqa: BLE001
+        tags = set()
+
+    detection = inspect_source(body.source, known_ollama_tags=tags)
+    name = body.name.strip() or detection.suggested_name
+
+    if detection.readiness == "ready" and detection.spec:
+        return {"spec": detection.spec, "name": name, "kind": detection.kind}
+
+    if detection.readiness != "needs_prepare":
+        raise HTTPException(status_code=400, detail=detection.detail)
+
+    try:
+        if detection.kind == "mlx_adapters":
+            model = await fuse_adapters(
+                adapter_path=detection.resolved_path,
+                base_model=detection.base_model,
+                name=name,
+            )
+            return {"spec": model.spec, "name": model.name, "kind": "fused"}
+
+        if detection.kind == "gguf_file":
+            tag = await import_gguf(detection.resolved_path, name)
+            return {"spec": f"ollama:{tag}", "name": tag, "kind": "ollama"}
+
+        if detection.kind == "model_dir":
+            model = register_folder(path=detection.resolved_path, name=name)
+            return {"spec": model.spec, "name": model.name, "kind": "folder"}
+
+    except (PrepareError, GgufImportError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    raise HTTPException(
+        status_code=400, detail=f"Cannot prepare {detection.kind}."
+    )
+
+
+@app.get("/api/models/prepared")
+async def prepared_models() -> dict:
+    return {
+        "models": [
+            {
+                "spec": m.spec,
+                "name": m.name,
+                "kind": m.kind,
+                "base_model": m.base_model,
+                "created_at": m.created_at,
+            }
+            for m in list_prepared()
+        ],
+        "mlx_available": mlx_available(),
+        # Drives whether the UI offers "Keep in Ollama" at all.
+        "can_export_to_ollama": find_gguf_converter() is not None,
+    }
+
+
+@app.delete("/api/models/prepared/{name}")
+async def delete_prepared(name: str, delete_files: bool = False) -> dict:
+    if not unregister(name, delete_files=delete_files):
+        raise HTTPException(status_code=404, detail=f"No model named {name!r}.")
+    return {"removed": name}
+
+
+@app.post("/api/models/prepared/{name}/export-to-ollama", status_code=201)
+async def export_prepared_to_ollama(name: str) -> dict:
+    """Convert a prepared model to GGUF and hand it to Ollama.
+
+    Slow and disk-hungry, but the result is a permanent Ollama model that
+    needs no managed server. Offered as an option, never required.
+    """
+    if not await ollama_available():
+        raise HTTPException(
+            status_code=422,
+            detail="Ollama is not installed. Get it from ollama.com.",
+        )
+    try:
+        tag = await export_to_ollama(name)
+    except (PrepareError, GgufImportError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"spec": f"ollama:{tag}", "name": tag, "kind": "ollama"}
 
 
 # --------------------------------------------------------------------------
@@ -342,3 +595,6 @@ async def stream_run(run_id: str, request: Request, since: int = 0):
 async def _shutdown() -> None:
     for controller in list(ACTIVE.values()):
         controller.cancel()
+    # Managed model servers are our child processes; leaving them running
+    # would hold gigabytes of memory after the API is gone.
+    await stop_all_servers()
