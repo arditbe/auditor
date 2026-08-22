@@ -111,48 +111,11 @@ Adding another Google model is one entry in
 
 ## Models under test
 
-You should not need to know what Ollama is to audit your own model. The
-dashboard has a drop zone: pick the folder your training run saved, and Auditor
-works out the rest.
-
-Uploading is the primary path because it works the same whether Auditor runs on
-your laptop or on Cloud Run — the files come from the browser, not from a
-filesystem the server may not share.
-
-| What you have | What Auditor does |
-|---|---|
-| A folder of **MLX LoRA adapters** | Fuses them into their base model and serves the result |
-| A **`.gguf` file** | Registers it with Ollama (no copy) |
-| A **complete model folder** | Serves it locally |
-| A **model server URL** | Sends probes straight to it |
-| A model **already in Ollama** | Picks it from the list |
-
-Only the files that matter are sent. MLX writes periodic checkpoints
-(`0000200_adapters.safetensors`) that the final adapter supersedes, so a 60 MB
-folder uploads as 21 MB. The base model is named in `adapter_config.json`
-rather than shipped, which is what keeps this small enough to be practical.
-
-Detection never guesses silently. If a run saved no weights, or the adapters do
-not name their base model, Auditor says exactly that instead of failing
-halfway through.
-
-Pasting a filesystem path is still available under **Use a path or a server URL
-instead** — but note it only works when Auditor is running on the same machine
-as the model.
-
-### Keeping a model in Ollama (optional)
-
-A prepared model is served by Auditor on demand. If you would rather Ollama own
-it permanently, use **Keep in Ollama**: the model is de-quantized, converted to
-GGUF, and registered as a normal Ollama tag.
-
-This needs llama.cpp's `convert_hf_to_gguf.py`. Point `LLAMA_CPP_PATH` at a
-checkout, or leave it — the button is hidden when the converter is missing, and
-auditing works identically without it.
-
-> `mlx_lm` has its own `--export-gguf`, and Auditor deliberately does not use
-> it. In 0.31 it writes every tensor with shape `(0,)` — a silently empty
-> model. An auditing tool must never hand you a corrupt export.
+Today the dropdown lists whatever Ollama has pulled locally — point a
+fine-tuned model at Ollama and it appears. To audit a model deployed behind an
+HTTP API instead, `HttpEndpointTarget` already speaks the OpenAI-compatible
+`/chat/completions` shape; construct it with `build_target("http:...")`. The
+agent is indifferent to which one it is talking to.
 
 ## What works locally vs. deployed
 
@@ -161,9 +124,6 @@ rather than discovering it during a demo.
 
 | | Local (your Mac) | Cloud Run |
 |---|---|---|
-| Upload a model folder | yes | yes |
-| Detect what it is | yes | yes |
-| **Fuse and run MLX adapters** | **yes** | **no — needs Apple Silicon** |
 | Ollama models | yes | no — no daemon in the container |
 | Audit a model server URL | yes | yes |
 | Local Gemma validator | yes | no |
@@ -171,16 +131,12 @@ rather than discovering it during a demo.
 | Firestore history | with a GCP project | yes |
 
 The deployed service is therefore an auditor **of deployed endpoints**, judged
-by Vertex AI models. The laptop is where local weights get audited, because
-that is where the hardware to run them is.
+by Vertex AI models. The laptop is where local Ollama models get audited,
+because that is where the local daemon runs.
 
 For a demo: run locally to show a real fine-tune being audited at zero cost,
 and show the Cloud Run service and Firestore documents to prove the backend is
 real. `docs/DEPLOY.md` covers both.
-
-An upload of MLX adapters to a deployed instance is detected correctly and then
-says so plainly — *"Your adapters uploaded fine, but this server cannot fuse MLX
-models — that needs Apple Silicon"* — rather than failing somewhere confusing.
 
 ## Where Google Cloud fits
 
@@ -210,8 +166,6 @@ All env vars, with defaults:
 | `OLLAMA_KEEP_ALIVE` | `20m` | Keeps both models resident (see below) |
 | `TARGET_TIMEOUT_S` | `90` | A slower answer counts as a failed probe |
 | `PROBE_DELAY_S` | `0` | Pause between probes, to slow a live demo down |
-| `AUDITOR_HOME` | `~/.auditor` | Where prepared models and the registry live |
-| `LLAMA_CPP_PATH` | — | llama.cpp checkout, enables GGUF export |
 
 ## Notes from building it
 

@@ -452,10 +452,8 @@ async def execute_run(controller: RunController) -> None:
             },
         )
 
-        # Built inside the try: a prepared model has to start a local server
-        # here, and if that fails the run must report it rather than vanish.
         await emit(EventType.LOG, {"message": "Connecting to the model..."})
-        target = await build_target(run.config.target_model)
+        target = build_target(run.config.target_model)
 
         # 1. The agent designs the test.
         await emit(EventType.LOG, {"message": "Designing probe set..."})

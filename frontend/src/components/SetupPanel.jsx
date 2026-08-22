@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import { AddModel } from './AddModel'
-import { PreparedModels } from './PreparedModels'
 
 function formatSize(bytes) {
   if (!bytes) return null
@@ -27,36 +25,18 @@ export function SetupPanel({ onStarted, disabled }) {
     model_purpose: '',
   })
 
-  const [prepared, setPrepared] = useState([])
-  const [canExport, setCanExport] = useState(false)
-  const [addingModel, setAddingModel] = useState(false)
-
   useEffect(() => {
     let cancelled = false
-    Promise.all([
-      api.targetModels(),
-      api.validators(),
-      api.suites(),
-      api.preparedModels().catch(() => ({ models: [] })),
-    ])
-      .then(([t, v, s, p]) => {
+    Promise.all([api.targetModels(), api.validators(), api.suites()])
+      .then(([t, v, s]) => {
         if (cancelled) return
         const local = t.models.filter((m) => m.is_local)
         setTargets(local)
         setTargetError(t.error)
         setValidators(v.validators)
         setSuites(s.suites)
-        setPrepared(p.models)
-        setCanExport(Boolean(p.can_export_to_ollama))
-        // Prefer a model the user prepared themselves -- if they went to the
-        // trouble of adding one, that is what they came to audit.
-        const preferred = p.models[0]?.spec ?? local[0]?.spec
-        if (preferred) {
-          setForm((f) => ({ ...f, target_model: preferred }))
-        } else {
-          // Nothing to choose from. An empty dropdown is a dead end, so open
-          // the one control that can actually get them unstuck.
-          setAddingModel(true)
+        if (local.length) {
+          setForm((f) => ({ ...f, target_model: local[0].spec }))
         }
       })
       .catch((e) => !cancelled && setError(e.message))
@@ -65,31 +45,6 @@ export function SetupPanel({ onStarted, disabled }) {
       cancelled = true
     }
   }, [])
-
-  const refreshModels = () => {
-    Promise.all([
-      api.preparedModels().catch(() => ({ models: [] })),
-      api.targetModels().catch(() => ({ models: [] })),
-    ]).then(([p, t]) => {
-      setPrepared(p.models)
-      setCanExport(Boolean(p.can_export_to_ollama))
-      setTargets(t.models.filter((m) => m.is_local))
-    })
-  }
-
-  /* A newly added model becomes the selection immediately -- the person just
-   * told us this is the one they care about. */
-  const onModelAdded = (model) => {
-    setPrepared((list) =>
-      list.some((m) => m.spec === model.spec) ? list : [model, ...list],
-    )
-    setForm((f) => ({ ...f, target_model: model.spec }))
-    setAddingModel(false)
-    api
-      .targetModels()
-      .then((t) => setTargets(t.models.filter((m) => m.is_local)))
-      .catch(() => {})
-  }
 
   const set = (key) => (e) => {
     const value = e.target.type === 'number' ? Number(e.target.value) : e.target.value
@@ -151,55 +106,19 @@ export function SetupPanel({ onStarted, disabled }) {
           id="target"
           value={form.target_model}
           onChange={set('target_model')}
-          disabled={loading || (!targets.length && !prepared.length)}
+          disabled={loading || !targets.length}
         >
-          {!targets.length && !prepared.length && (
-            <option value="">No models yet — add yours below</option>
-          )}
-          {prepared.length > 0 && (
-            <optgroup label="Your models">
-              {prepared.map((m) => (
-                <option key={m.spec} value={m.spec}>
-                  {m.name}
-                  {m.base_model ? ` · fine-tune of ${m.base_model}` : ''}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {targets.length > 0 && (
-            <optgroup label="Installed with Ollama">
-              {targets.map((m) => (
-                <option key={m.spec} value={m.spec}>
-                  {m.name}
-                  {m.parameter_size ? ` · ${m.parameter_size}` : ''}
-                  {formatSize(m.size_bytes) ? ` · ${formatSize(m.size_bytes)}` : ''}
-                </option>
-              ))}
-            </optgroup>
-          )}
+          {!targets.length && <option value="">No local models found</option>}
+          {targets.map((m) => (
+            <option key={m.spec} value={m.spec}>
+              {m.name}
+              {m.parameter_size ? ` · ${m.parameter_size}` : ''}
+              {formatSize(m.size_bytes) ? ` · ${formatSize(m.size_bytes)}` : ''}
+            </option>
+          ))}
         </select>
-
-        <PreparedModels
-          models={prepared}
-          onChanged={refreshModels}
-          canExport={canExport}
-        />
-
-        {addingModel ? (
-          <AddModel onAdded={onModelAdded} />
-        ) : (
-          <button
-            type="button"
-            className="link-btn"
-            style={{ marginLeft: 0 }}
-            onClick={() => setAddingModel(true)}
-          >
-            Trained your own model? Add it →
-          </button>
-        )}
-
-        <div className="hint" style={{ display: addingModel ? 'none' : undefined }}>
-          Everything here runs on this machine.
+        <div className="hint">
+          Served by Ollama on this machine. Point a fine-tuned model here to audit it.
         </div>
       </div>
 

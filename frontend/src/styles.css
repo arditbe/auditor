@@ -289,169 +289,101 @@ option:disabled { color: var(--slate); }
   .field-row { grid-template-columns: 1fr; }
 }
 
-/* ---------- prepared models ---------- */
+/* ---------- settings modal ---------- */
 
-.prepared { margin-top: 12px; }
+.status-pill.as-button {
+  cursor: pointer;
+  color: inherit;
+}
+.status-pill.as-button:hover { border-color: var(--ink); }
 
-.prepared > .eyebrow { display: block; margin-bottom: 6px; }
-
-.prepared-row {
-  padding: 9px 11px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--panel);
-  margin-bottom: 6px;
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #141B1CA6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 20px 20px;
+  overflow-y: auto;
+  animation: enter 0.16s ease both;
 }
 
-.prepared-name {
+.modal {
+  width: min(560px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px #141B1C40;
+}
+
+.modal-head {
   display: flex;
   align-items: baseline;
-  gap: 9px;
-  flex-wrap: wrap;
-  font-size: 14.5px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--rule);
 }
 
-.prepared-base {
-  font-size: 10.5px;
-  color: var(--slate);
+.modal-head h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 21px;
 }
 
-.prepared-actions {
+.modal-head .link-btn { margin: 0; }
+
+.modal-body { padding: 18px; }
+
+.modal-body .field { margin-bottom: 0; }
+
+.modal-body a { color: var(--live); }
+
+.modal-actions {
   display: flex;
-  gap: 14px;
   align-items: center;
-  margin-top: 4px;
+  gap: 16px;
+  margin: 16px 0 12px;
 }
 
-.prepared-actions .link-btn { margin: 0; }
-.link-btn.danger { color: var(--fail); }
-.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.modal-actions .link-btn { margin: 0; }
 
-.prepared-confirm { margin-top: 6px; }
+/* Plain statement of what this machine can and cannot do. */
+.capability-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
 
-.prepared-confirm p {
-  margin: 0 0 8px;
-  font-size: 13.5px;
+.capability-list li {
+  font-family: var(--mono);
+  font-size: 11.5px;
   line-height: 1.5;
-  color: var(--slate);
-}
-
-/* ---------- add your own model ---------- */
-
-.add-model {
-  margin-top: 12px;
-  padding: 14px;
-  border: 1px solid var(--rule);
-  border-left-width: 3px;
-  border-left-color: var(--live);
-  border-radius: var(--radius);
-  background: var(--paper-2);
-}
-
-/* Drop target: the primary way a model gets in. */
-.dropzone {
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 18px 14px;
-  text-align: center;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.dropzone[data-dragging="true"] {
-  border-color: var(--live);
-  border-style: solid;
-  background: var(--paper-2);
-}
-
-.dropzone-lede {
-  margin: 0 0 11px;
-  font-size: 15px;
+  padding-left: 18px;
+  position: relative;
   color: var(--ink);
 }
 
-.dropzone-actions {
-  display: flex;
-  gap: 9px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.dropzone-hint {
-  margin: 11px 0 0;
-  font-family: var(--mono);
-  font-size: 11px;
+.capability-list li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
   color: var(--slate);
-  line-height: 1.5;
+}
+.capability-list li[data-ok="true"]::before {
+  content: "✓";
+  color: var(--pass);
 }
 
-.path-form { margin-top: 12px; }
+.capability-list li span { color: var(--slate); }
 
-.add-model > form > label,
-.path-form > label {
-  display: block;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--slate);
-  margin-bottom: 6px;
-}
-
-.add-model-row {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.add-model-row input { flex: 1; min-width: 0; }
-.add-model-row .btn { white-space: nowrap; }
-
-@media (max-width: 520px) {
-  .add-model-row { flex-direction: column; }
-}
-
-/* What Auditor found, and what it will do about it. */
-.detection {
-  margin-top: 14px;
-  padding: 12px 13px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--panel);
-  animation: enter 0.25s ease both;
-}
-.detection[data-tone="pass"] { border-color: var(--pass); background: var(--pass-wash); }
-.detection[data-tone="fail"] { border-color: var(--fail); background: var(--fail-wash); }
-.detection[data-tone="live"] { border-color: var(--live); }
-
-.detection-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-
-.detection-title {
-  font-family: var(--serif);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.detection-detail {
-  margin: 0;
-  font-size: 14.5px;
-  line-height: 1.55;
-}
-
-.detection-meta {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--slate);
-  margin-top: 7px;
-  line-height: 1.5;
-}
-.detection-meta.warn { color: var(--warn); }
+.link-btn.danger { color: var(--fail); }
+.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---------- buttons ---------- */
 

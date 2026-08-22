@@ -138,9 +138,6 @@ async function startBackend() {
     ...process.env,
     PYTHONUNBUFFERED: '1',
     PYTHONDONTWRITEBYTECODE: '1',
-    // Prepared models and uploads live beside the app's other data, not in
-    // the user's home directory root.
-    AUDITOR_HOME: path.join(app.getPath('userData'), 'auditor'),
     STORE_BACKEND: 'memory',
   }
   if (apiKey) env.GOOGLE_API_KEY = apiKey

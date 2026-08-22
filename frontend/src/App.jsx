@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from './lib/api'
+import { api, isDesktop } from './lib/api'
 import { useRunStream } from './hooks/useRunStream'
 import { SetupPanel } from './components/SetupPanel'
 import { Transcript } from './components/Transcript'
@@ -7,6 +7,7 @@ import { MeterBridge } from './components/MeterBridge'
 import { ScorePanel } from './components/ScorePanel'
 import { ValidatorSwitch } from './components/ValidatorSwitch'
 import { Report } from './components/Report'
+import { Settings } from './components/Settings'
 
 const STATUS_TEXT = {
   idle: 'Ready',
@@ -28,6 +29,8 @@ export default function App() {
   const [runId, setRunIdState] = useState(runIdFromHash)
   const [validators, setValidators] = useState([])
   const [health, setHealth] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [validatorEpoch, setValidatorEpoch] = useState(0)
   const run = useRunStream(runId)
   const transcriptRef = useRef(null)
 
@@ -52,6 +55,12 @@ export default function App() {
   useEffect(() => {
     api.validators().then((v) => setValidators(v.validators)).catch(() => {})
     api.health().then(setHealth).catch(() => {})
+  }, [validatorEpoch])
+
+  // The desktop shell's Settings menu item opens this window.
+  useEffect(() => {
+    if (!isDesktop) return undefined
+    return window.auditorDesktop.onOpenSettings(() => setSettingsOpen(true))
   }, [])
 
   // Follow the newest probe as it lands, but never fight a user who has
@@ -96,7 +105,19 @@ export default function App() {
             store: {health.store}
           </span>
         )}
+        <button
+          className="status-pill as-button"
+          onClick={() => setSettingsOpen(true)}
+        >
+          Settings
+        </button>
       </header>
+
+      <Settings
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onChanged={() => setValidatorEpoch((n) => n + 1)}
+      />
 
       {!runId ? (
         <div className="workspace">
