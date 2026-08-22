@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, isDesktop } from './lib/api'
+import { api, isCloudDemo, isDesktop } from './lib/api'
 import { useRunStream } from './hooks/useRunStream'
 import { SetupPanel } from './components/SetupPanel'
 import { Transcript } from './components/Transcript'
@@ -50,6 +50,15 @@ export default function App() {
 
   useEffect(() => {
     api.validators().then((v) => setValidators(v.validators)).catch(() => {})
+  }, [epoch])
+
+  useEffect(() => {
+    if (!isCloudDemo) return
+    api.settings()
+      .then((status) => {
+        if (!status.google_api_key_set) setSettingsOpen(true)
+      })
+      .catch(() => {})
   }, [epoch])
 
   // The desktop shell's Settings menu item opens this window.
