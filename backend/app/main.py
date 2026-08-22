@@ -37,6 +37,7 @@ from .providers import (
     import_gguf,
     inspect_source,
     is_useful,
+    get_validator,
     list_ollama_models,
     list_prepared,
     list_validators,
@@ -158,7 +159,14 @@ async def target_models() -> dict:
 
 @app.get("/api/models/validator")
 async def validator_models() -> dict:
-    return {"validators": list_validators()}
+    validators = list_validators()
+    if settings.auditor_cloud_demo:
+        validators = [
+            validator
+            for validator in validators
+            if validator["provider"] == "ai-studio"
+        ]
+    return {"validators": validators}
 
 
 @app.get("/api/suites")
@@ -519,13 +527,21 @@ async def upload_validator_context(file: UploadFile = File(...)) -> dict:
 @app.post("/api/runs", status_code=201)
 async def create_run(body: StartRunRequest, request: Request) -> dict:
     _enforce_rate_limit(request)
-    if settings.auditor_cloud_demo and not body.target_model.strip().startswith(
-        ("http://", "https://")
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="This web demo can only audit model server URLs.",
-        )
+    if settings.auditor_cloud_demo:
+        if not body.target_model.strip().startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=400,
+                detail="This web demo can only audit model server URLs.",
+            )
+        try:
+            validator = get_validator(body.validator_model)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if validator.provider != "ai-studio":
+            raise HTTPException(
+                status_code=400,
+                detail="This web demo uses Gemini API-key judges only.",
+            )
 
     try:
         run = await start_run(RunConfig(**body.model_dump()))
@@ -566,6 +582,17 @@ async def get_run(run_id: str) -> dict:
 @app.post("/api/runs/{run_id}/validator")
 async def switch_validator(run_id: str, body: SwitchValidatorRequest) -> dict:
     """Repoint an in-flight run at a different validator."""
+    if settings.auditor_cloud_demo:
+        try:
+            validator = get_validator(body.validator_model)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if validator.provider != "ai-studio":
+            raise HTTPException(
+                status_code=400,
+                detail="This web demo uses Gemini API-key judges only.",
+            )
+
     controller = ACTIVE.get(run_id)
     if not controller:
         raise HTTPException(
