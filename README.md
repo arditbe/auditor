@@ -2,6 +2,14 @@
 
 Real-time validation for fine-tuned language models.
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/arditbe/auditor/blob/main/notebooks/auditor_colab.ipynb)
+[![Run in the terminal](https://img.shields.io/badge/Run_in_the_terminal-%E2%80%BA_bash_scripts%2Fcolab.sh-1D6A7A?style=flat&logo=gnubash&logoColor=white)](#terminal--colab)
+[![Tests](https://img.shields.io/badge/tests-156_passing-2F6B4F?style=flat)](#)
+[![Python](https://img.shields.io/badge/python-3.12-3776AB?style=flat&logo=python&logoColor=white)](#quick-start)
+
+**Colab** needs nothing but a free [Gemini API key](https://aistudio.google.com/apikey) — no install, no Google Cloud project.
+**Terminal** runs the same audit locally, against Ollama or your own endpoint.
+
 Point Auditor at a model. It writes its own test questions, puts them to the
 model one at a time, and has a second model score every answer against criteria
 it committed to *before* seeing the response. You watch the whole interrogation
@@ -153,6 +161,60 @@ auditing works identically without it.
 > `mlx_lm` has its own `--export-gguf`, and Auditor deliberately does not use
 > it. In 0.31 it writes every tensor with shape `(0,)` — a silently empty
 > model. An auditing tool must never hand you a corrupt export.
+
+## Terminal / Colab
+
+No browser needed. Two ways in:
+
+**Colab** — click the badge at the top. It clones the repo, takes a Gemini key
+with hidden input so it never lands in notebook output, installs Ollama with a
+small model to test against, and prints a scored audit.
+
+**Your own machine** — `scripts/colab.sh` does the same thing locally:
+
+```bash
+bash scripts/colab.sh
+```
+
+It creates a venv, prompts for the key and the target, then runs. Everything is
+skippable with environment variables:
+
+```bash
+GOOGLE_API_KEY=... TARGET=https://my-model.example.com/v1 PROBES=8 \
+  bash scripts/colab.sh
+```
+
+`WITH_OLLAMA=1` installs Ollama and pulls a small model to audit.
+
+### The CLI directly
+
+```bash
+cd backend
+.venv/bin/python -m app.cli --target ollama:qwen2:0.5b --probes 6
+.venv/bin/python -m app.cli --list-validators
+```
+
+| Flag | |
+|---|---|
+| `--target` | `ollama:<tag>`, an `https://` URL, or `prepared:<name>` |
+| `--validator` | judge model; `gemini-flash-key` needs `GOOGLE_API_KEY` |
+| `--probes` | how many questions (default 6) |
+| `--suite` | `general`, `medical`, `code`, `safety` |
+| `--purpose` | what the model was tuned for; steers the probes |
+| `--min-score` | exit 2 below this, so it works as a CI gate |
+| `--full` | print answers in full instead of truncating |
+
+Exit codes are meaningful: `0` finished, `1` failed, `2` scored below
+`--min-score`.
+
+### Gemini without Google Cloud
+
+The `*-key` validators take a plain Google AI Studio key — no `gcloud`, no
+project, no application-default credentials. Get one free at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) and set
+`GOOGLE_API_KEY`, or paste it into Settings in the dashboard.
+
+The key is held only by the running process and never written to disk.
 
 ## What works locally vs. deployed
 
