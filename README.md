@@ -29,6 +29,13 @@ Then it keeps going without you:
 - **It runs while you sleep.** Schedule an audit hourly, daily or weekly and
   nobody needs to open the dashboard again.
 
+<p align="center">
+  <img src="docs/architecture.svg" alt="Auditor architecture: Cloud Scheduler and a browser drive one Cloud Run service running two Google ADK agents against Gemini 3.5 Flash on Vertex AI, with runs and watches in Firestore." width="100%">
+</p>
+
+<details>
+<summary>Same thing as text</summary>
+
 ```
                     ┌──────────────────────────────────────┐
    Cloud Scheduler ─┤  POST /api/scheduled/tick   (nightly)│
@@ -56,6 +63,8 @@ Then it keeps going without you:
                                                                 ▼
                                                     training data (.jsonl/.csv)
 ```
+
+</details>
 
 ## What it measures
 

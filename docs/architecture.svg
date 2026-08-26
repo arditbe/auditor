@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 700" width="1020" height="700" font-family="'Plus Jakarta Sans','Segoe UI',system-ui,-apple-system,sans-serif">
+  <title>Auditor — architecture</title>
+  <desc>Cloud Scheduler and a browser both drive one Cloud Run service, which runs two Google ADK agents against Gemini 3.5 Flash on Vertex AI, queries the model under test, and persists runs, watches and training data to Firestore.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8B8AA3"/>
+    </marker>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5B4BD6"/>
+    </marker>
+    <style>
+      .box   { fill:#FFFFFF; stroke:#D5D1E6; stroke-width:1.5; rx:12; }
+      .band  { fill:#FAF9FE; stroke:#C9C1F4; stroke-width:1.5; rx:14; }
+      .agent { fill:#EDEAFC; stroke:#5B4BD6; stroke-width:1.5; rx:10; }
+      .title { font-size:15px; font-weight:700; fill:#1A1830; }
+      .sub   { font-size:12px; fill:#6E6B89; }
+      .tiny  { font-size:11px; fill:#9A97AE; }
+      .lbl   { font-size:11.5px; fill:#6E6B89; font-weight:600; }
+      .lblp  { font-size:11.5px; fill:#5B4BD6; font-weight:700; }
+      .flow  { stroke:#8B8AA3; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+      .flowP { stroke:#5B4BD6; stroke-width:2; fill:none; marker-end:url(#arrowP); }
+      .eyebrow { font-size:10.5px; font-weight:700; fill:#9A97AE; letter-spacing:0.09em; }
+    </style>
+  </defs>
+
+  <rect width="1020" height="700" fill="#F4F3FA"/>
+
+  <text x="40" y="46" font-size="23" font-weight="700" fill="#1A1830">Auditor — architecture</text>
+  <text x="40" y="70" class="sub">An agent that audits a fine-tuned model, decides where to dig, and keeps doing it on a schedule.</text>
+
+  <!-- ============ triggers ============ -->
+  <text x="40" y="112" class="eyebrow">TRIGGERS</text>
+
+  <rect class="box" x="40" y="126" width="250" height="86"/>
+  <text x="62" y="156" class="title">Cloud Scheduler</text>
+  <text x="62" y="176" class="sub">hourly · OIDC token</text>
+  <text x="62" y="194" class="tiny">dedicated SA · run.invoker only</text>
+
+  <rect class="box" x="316" y="126" width="230" height="86"/>
+  <text x="338" y="156" class="title">Browser</text>
+  <text x="338" y="176" class="sub">dashboard · live SSE</text>
+  <text x="338" y="194" class="tiny">watch one audit as it happens</text>
+
+  <!-- ============ cloud run ============ -->
+  <rect class="band" x="40" y="258" width="506" height="252"/>
+  <text x="62" y="284" class="eyebrow">GOOGLE CLOUD RUN — one service, one image</text>
+
+  <rect class="box" x="62" y="298" width="462" height="72"/>
+  <text x="82" y="326" class="title">FastAPI · orchestrator</text>
+  <text x="82" y="346" class="sub">run loop · watch scheduler · SSE stream · static dashboard</text>
+  <text x="82" y="362" class="tiny">POST /api/scheduled/tick decides which watches are due</text>
+
+  <rect class="agent" x="62" y="388" width="222" height="104"/>
+  <text x="82" y="414" class="eyebrow">GOOGLE ADK</text>
+  <text x="82" y="436" class="title">Probe generator</text>
+  <text x="82" y="456" class="sub">writes the test questions,</text>
+  <text x="82" y="472" class="sub">~1 in 4 a deliberate trap</text>
+
+  <rect class="agent" x="302" y="388" width="222" height="104"/>
+  <text x="322" y="414" class="eyebrow">GOOGLE ADK</text>
+  <text x="322" y="436" class="title">Judge</text>
+  <text x="322" y="456" class="sub">scores each answer against</text>
+  <text x="322" y="472" class="sub">criteria written beforehand</text>
+
+  <!-- ============ right column ============ -->
+  <text x="600" y="112" class="eyebrow">MODEL UNDER TEST</text>
+  <rect class="box" x="600" y="126" width="380" height="86"/>
+  <text x="622" y="156" class="title">Your fine-tuned model</text>
+  <text x="622" y="176" class="sub">MLX LoRA adapters · GGUF · Ollama tag · HTTPS endpoint</text>
+  <text x="622" y="194" class="tiny">adapters are fused and served locally on demand</text>
+
+  <text x="600" y="284" class="eyebrow">GEMINI</text>
+  <rect class="box" x="600" y="298" width="380" height="86" stroke="#5B4BD6"/>
+  <text x="622" y="328" class="title">Gemini 3.5 Flash</text>
+  <text x="622" y="348" class="sub">Vertex AI · global endpoint</text>
+  <text x="622" y="366" class="tiny">also 3.1 Pro and 3.5 Flash-Lite; local Gemma 3 for $0 runs</text>
+
+  <text x="600" y="418" class="eyebrow">STATE</text>
+  <rect class="box" x="600" y="432" width="380" height="86"/>
+  <text x="622" y="462" class="title">Firestore</text>
+  <text x="622" y="482" class="sub">runs · watches · scores over time</text>
+  <text x="622" y="500" class="tiny">the baseline every regression check compares against</text>
+
+  <!-- ============ output ============ -->
+  <text x="40" y="560" class="eyebrow">OUTPUT</text>
+  <rect class="box" x="40" y="574" width="250" height="86"/>
+  <text x="62" y="604" class="title">Training data</text>
+  <text x="62" y="624" class="sub">.jsonl to train, .csv to review</text>
+  <text x="62" y="642" class="tiny">every failure, corrected by the judge</text>
+
+  <rect class="box" x="316" y="574" width="230" height="86"/>
+  <text x="338" y="604" class="title">Report</text>
+  <text x="338" y="624" class="sub">score /100 · weakest area</text>
+  <text x="338" y="642" class="tiny">regression flagged against last run</text>
+
+  <!-- ============ flows ============ -->
+  <path class="flowP" d="M165 212 L165 252"/>
+  <text x="176" y="238" class="lblp">nightly tick</text>
+
+  <path class="flow" d="M431 212 L431 252"/>
+  <text x="442" y="238" class="lbl">REST + SSE</text>
+
+  <!-- orchestrator to agents -->
+  <path class="flow" d="M173 370 L173 382"/>
+  <path class="flow" d="M413 370 L413 382"/>
+
+  <!-- agents to gemini -->
+  <path class="flowP" d="M524 428 C 566 428, 566 350, 594 344"/>
+  <text x="536" y="404" class="lblp">ADK → Vertex</text>
+
+  <!-- orchestrator to model under test -->
+  <path class="flow" d="M524 320 C 560 320, 560 200, 594 186"/>
+  <text x="536" y="258" class="lbl">asks the</text>
+  <text x="536" y="272" class="lbl">model</text>
+
+  <!-- orchestrator to firestore -->
+  <path class="flow" d="M524 344 C 556 344, 560 470, 594 474"/>
+  <text x="536" y="450" class="lbl">persists</text>
+
+  <!-- firestore back to orchestrator: the baseline -->
+  <path class="flow" d="M600 500 C 545 512, 520 500, 524 366" stroke-dasharray="5 4"/>
+  <text x="470" y="536" class="lbl">baseline</text>
+
+  <!-- outputs -->
+  <path class="flow" d="M165 510 L165 568"/>
+  <path class="flow" d="M431 510 L431 568"/>
+
+  <!-- adaptive loop, drawn as the agent's own decision -->
+  <path class="flowP" d="M284 440 C 296 440, 296 440, 302 440"/>
+  <path class="flowP" d="M293 492 C 293 524, 173 524, 173 496" stroke-dasharray="6 4"/>
+  <text x="196" y="540" class="lblp">weak dimension → deeper probes</text>
+</svg>
