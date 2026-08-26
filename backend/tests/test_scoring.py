@@ -27,6 +27,8 @@ from app.models.schemas import (  # noqa: E402
     weighted_score,
 )
 from app.orchestrator import (  # noqa: E402
+    _is_rate_limited,
+    _unscored_evaluation,
     _coerce_evaluation,
     _coerce_probes,
     aggregate,
@@ -338,3 +340,61 @@ class TestReport:
         run.score = aggregate(run)
         report = build_report(run)
         assert report["validators_used"] == ["gemini-flash", "local-gemma"]
+
+
+class TestJudgeFailuresDoNotPenaliseTheModel:
+    """A rate limit is Google's problem, not the model's.
+
+    A 429 once scored the model 0 on accuracy, so a quota blip looked exactly
+    like a bad model. Judge failures must contribute nothing instead.
+    """
+
+    def test_unscored_carries_no_dimensions(self):
+        ev = _unscored_evaluation("p1", "gemini-flash", "quota")
+        assert ev.scores == {}
+        assert "not-scored" in ev.flags
+
+    def test_unscored_does_not_move_the_score(self):
+        good = Evaluation(
+            probe_id="p1",
+            scores={Dimension.ACCURACY: 4.0},
+            verdict=Verdict.PASS,
+        )
+        run = _run_with([good])
+        before = aggregate(run).overall
+
+        run.evaluations["p2"] = _unscored_evaluation("p2", "gemini-flash", "429")
+        run.probes.append(
+            Probe(probe_id="p2", index=1, question="q", dimension=Dimension.ACCURACY)
+        )
+        after = aggregate(run)
+
+        assert after.overall == before, "an unscored probe must not change the score"
+        assert after.dimensions[Dimension.ACCURACY] == 4.0
+
+    def test_target_failure_still_scores_zero(self):
+        # The model genuinely failing is different, and must still count.
+        from app.orchestrator import _failed_evaluation
+
+        ev = _failed_evaluation("p1", "gemini-flash", "no response")
+        assert ev.scores[Dimension.ACCURACY] == 0.0
+        assert ev.verdict is Verdict.FAIL
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "429 RESOURCE_EXHAUSTED",
+            "_ResourceExhaustedError: quota exceeded",
+            "Rate limit reached for model",
+            "Quota exceeded for aiplatform.googleapis.com",
+        ],
+    )
+    def test_rate_limits_are_recognised(self, message):
+        assert _is_rate_limited(RuntimeError(message)) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        ["connection refused", "invalid json", "model not found 404"],
+    )
+    def test_other_errors_are_not_mistaken_for_rate_limits(self, message):
+        assert _is_rate_limited(RuntimeError(message)) is False

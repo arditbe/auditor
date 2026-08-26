@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, isCloudDemo } from '../lib/api'
+import { api } from '../lib/api'
 import { ModelPicker } from './ModelPicker'
 import { JudgePicker } from './JudgePicker'
 import { PurposeField } from './PurposeField'
@@ -11,7 +11,13 @@ import { PurposeField } from './PurposeField'
  * — probe count, suite, what the model was tuned for — is folded into step
  * three, which has a sensible default and can be ignored entirely.
  */
-export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
+export function SetupPanel({
+  onStarted,
+  onOpenSettings,
+  reloadKey = 0,
+  // null while the server is still being asked what it can do.
+  cloudMode = null,
+}) {
   const [installed, setInstalled] = useState([])
   const [owned, setOwned] = useState([])
   const [validators, setValidators] = useState([])
@@ -31,17 +37,18 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
 
   const load = () =>
     Promise.all([
-      isCloudDemo
+      cloudMode
         ? Promise.resolve({ models: [], error: null })
         : api.targetModels().catch(() => ({ models: [], error: null })),
       api.validators(),
       api.suites(),
-      isCloudDemo
+      cloudMode
         ? Promise.resolve({ models: [] })
         : api.preparedModels().catch(() => ({ models: [] })),
     ])
 
   useEffect(() => {
+    if (cloudMode === null) return undefined
     let cancelled = false
     load()
       .then(([t, v, s, p]) => {
@@ -49,9 +56,11 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
         const local = t.models.filter((m) => m.is_local)
         setInstalled(local)
         setInstallError(t.error)
-        const shownValidators = isCloudDemo
-          ? v.validators.filter((x) => x.provider === 'ai-studio')
-          : v.validators
+        // Every judge is offered in both modes; the server already marks
+        // each one available or not. Cloud mode changes how you pick a
+        // *model*, not who is allowed to judge -- and on Cloud Run the Vertex
+        // judges are the ones that work, so filtering them out left nothing.
+        const shownValidators = v.validators
         setValidators(shownValidators)
         setSuites(s.suites)
         setOwned(p.models)
@@ -80,16 +89,12 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [reloadKey, cloudMode])
 
   const refresh = () =>
     load().then(([t, v, s, p]) => {
       setInstalled(t.models.filter((m) => m.is_local))
-      setValidators(
-        isCloudDemo
-          ? v.validators.filter((x) => x.provider === 'ai-studio')
-          : v.validators,
-      )
+      setValidators(v.validators)
       setOwned(p.models)
     })
 
@@ -157,7 +162,7 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
           <h2>Choose a model</h2>
         </div>
         <p className="step-sub">
-          {isCloudDemo
+          {cloudMode
             ? 'Paste the HTTPS URL for a running model server.'
             : 'Drop the folder your training saved, or pick one already on this machine.'}
         </p>
@@ -170,7 +175,7 @@ export function SetupPanel({ onStarted, onOpenSettings, reloadKey = 0 }) {
             onAdded={onModelAdded}
             onRemoveOwned={removeOwned}
             installError={installError}
-            cloudMode={isCloudDemo}
+            cloudMode={Boolean(cloudMode)}
           />
         </div>
       </section>

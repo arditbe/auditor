@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 class EventType(str, Enum):
     RUN_STARTED = "run.started"
     PLAN_READY = "plan.ready"
+    FOCUS_STARTED = "focus.started"
     PROBE_STARTED = "probe.started"
     PROBE_ANSWERED = "probe.answered"
     PROBE_EVALUATED = "probe.evaluated"

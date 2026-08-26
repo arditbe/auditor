@@ -12,17 +12,21 @@ import logging
 import os
 import shutil
 import time
+from pathlib import Path
 from collections import defaultdict, deque
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent.prompts import SUITES
 from .agent.validator_agent import reset_cache as reset_agent_cache
 from .config import settings
 from .context_upload import extract_uploaded_context
+from .datasets import build_dataset, dataset_path, list_datasets
+from .watches import INTERVALS, Watch, get_watch_store
 from .events import STREAM_END, EventType, bus
 from .models.schemas import RunConfig
 from .orchestrator import ACTIVE, MAX_PROBES, start_run
@@ -160,6 +164,24 @@ async def target_models() -> dict:
 @app.get("/api/models/validator")
 async def validator_models() -> dict:
     validators = list_validators()
+
+    # An Ollama judge needs a reachable Ollama. On Cloud Run there is no
+    # daemon, so offering it would hand the user a judge that fails on the
+    # first probe.
+    if any(v["provider"] == "ollama" for v in validators):
+        try:
+            reachable = bool(await list_ollama_models())
+        except Exception:  # noqa: BLE001
+            reachable = False
+        if not reachable:
+            for v in validators:
+                if v["provider"] == "ollama":
+                    v["available"] = False
+                    v["unavailable_reason"] = (
+                        f"No Ollama at {settings.ollama_host}. "
+                        "Install it from ollama.com, or pick a Google judge."
+                    )
+
     if settings.auditor_cloud_demo:
         validators = [
             validator
@@ -205,8 +227,23 @@ async def get_settings() -> dict:
         "vertex_configured": settings.vertex_configured,
         "ollama_host": settings.ollama_host,
         "mlx_available": mlx_available(),
-        "ollama_available": await ollama_available(),
+        # Whether the configured Ollama *server* answers -- not whether the
+        # CLI happens to be installed. Serving a model needs the daemon, and
+        # the UI uses this to decide if local models are offerable at all.
+        "ollama_available": await _ollama_serving(),
+        # The CLI is a separate capability: it is what imports a GGUF.
+        "ollama_cli_available": await ollama_available(),
+        "cloud_demo": settings.auditor_cloud_demo,
     }
+
+
+async def _ollama_serving() -> bool:
+    """Is there a reachable Ollama at the configured host?"""
+    try:
+        await list_ollama_models()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @app.put("/api/settings/google-api-key")
@@ -621,6 +658,284 @@ async def cancel_run(run_id: str) -> dict:
 
 
 # --------------------------------------------------------------------------
+# watches: standing instructions to audit on a schedule
+# --------------------------------------------------------------------------
+
+class WatchRequest(BaseModel):
+    name: str = ""
+    target_model: str
+    validator_model: str = "gemini-flash"
+    suite: str = "general"
+    num_probes: int = Field(default=6, ge=1, le=MAX_PROBES)
+    model_purpose: str = ""
+    cadence: str = "daily"
+    hour_utc: int = Field(default=3, ge=0, le=23)
+    build_dataset: bool = False
+    dataset_on_regression_only: bool = True
+    enabled: bool = True
+
+
+@app.get("/api/watches")
+async def list_watches() -> dict:
+    watches = await get_watch_store().list_all()
+    return {"watches": [w.model_dump(mode="json") for w in watches]}
+
+
+@app.post("/api/watches", status_code=201)
+async def create_watch(body: WatchRequest) -> dict:
+    if body.cadence not in INTERVALS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cadence must be one of: {', '.join(INTERVALS)}",
+        )
+    try:
+        get_validator(body.validator_model)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    watch = Watch(**body.model_dump())
+    watch.name = watch.name or watch.target_model
+    watch.schedule_next()
+    await get_watch_store().save(watch)
+    log.info("watch created: %s every %s", watch.name, watch.cadence)
+    return watch.model_dump(mode="json")
+
+
+@app.patch("/api/watches/{watch_id}")
+async def update_watch(watch_id: str, body: dict) -> dict:
+    store = get_watch_store()
+    watch = await store.get(watch_id)
+    if watch is None:
+        raise HTTPException(status_code=404, detail="No such watch")
+
+    editable = {
+        "name", "enabled", "cadence", "hour_utc", "num_probes",
+        "validator_model", "suite", "model_purpose",
+        "build_dataset", "dataset_on_regression_only",
+    }
+    for key, value in body.items():
+        if key in editable:
+            setattr(watch, key, value)
+
+    # Re-anchor the schedule whenever the timing changed.
+    if {"cadence", "hour_utc", "enabled"} & set(body):
+        watch.schedule_next()
+    await store.save(watch)
+    return watch.model_dump(mode="json")
+
+
+@app.delete("/api/watches/{watch_id}")
+async def delete_watch(watch_id: str) -> dict:
+    if not await get_watch_store().delete(watch_id):
+        raise HTTPException(status_code=404, detail="No such watch")
+    return {"removed": watch_id}
+
+
+@app.post("/api/watches/{watch_id}/run", status_code=202)
+async def run_watch_now(watch_id: str, request: Request) -> dict:
+    """Fire a watch immediately, without waiting for its schedule."""
+    watch = await get_watch_store().get(watch_id)
+    if watch is None:
+        raise HTTPException(status_code=404, detail="No such watch")
+    _enforce_rate_limit(request)
+    return await _execute_watch(watch)
+
+
+# --------------------------------------------------------------------------
+# datasets built from failures
+# --------------------------------------------------------------------------
+
+@app.get("/api/datasets")
+async def get_datasets() -> dict:
+    return {"datasets": [d.model_dump(mode="json") for d in list_datasets()]}
+
+
+@app.post("/api/runs/{run_id}/dataset", status_code=201)
+async def create_dataset(run_id: str) -> dict:
+    """Turn this run's failures into training data with corrected answers."""
+    run = await get_store().get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No such run")
+
+    built = await build_dataset(run)
+    if built is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Nothing to fix — this run had no failures the judge could correct.",
+        )
+    return built.model_dump(mode="json")
+
+
+@app.get("/api/datasets/{name}")
+async def download_dataset(name: str):
+    path = dataset_path(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No such dataset")
+    return FileResponse(path, media_type="application/x-ndjson", filename=path.name)
+
+
+# --------------------------------------------------------------------------
+# scheduled / background audits
+# --------------------------------------------------------------------------
+
+class ScheduledRunRequest(BaseModel):
+    """A watch: audit this model on a schedule and tell me if it got worse."""
+
+    target_model: str
+    validator_model: str = "gemini-flash"
+    suite: str = "general"
+    num_probes: int = Field(default=6, ge=1, le=MAX_PROBES)
+    model_purpose: str = ""
+
+
+async def _execute_watch(watch: Watch) -> dict:
+    """Run one watch to completion and record what happened.
+
+    Nobody is watching this, so everything it decides has to be written down:
+    the score, whether it regressed, and any dataset it produced.
+    """
+    store = get_watch_store()
+    run = await start_run(
+        RunConfig(
+            target_model=watch.target_model,
+            validator_model=watch.validator_model,
+            suite=watch.suite,
+            num_probes=watch.num_probes,
+            model_purpose=watch.model_purpose,
+        )
+    )
+
+    controller = ACTIVE.get(run.run_id)
+    if controller and controller.task:
+        try:
+            await asyncio.wait_for(controller.task, timeout=1800)
+        except asyncio.TimeoutError:
+            controller.cancel()
+
+    finished = await get_store().get(run.run_id)
+    report = (finished.report if finished else None) or {}
+    regression = report.get("regression") or {}
+    regressed = bool(regression.get("regressed"))
+
+    dataset = None
+    # A stable model needs no repair data; building it every night would just
+    # burn judge calls for files nobody opens.
+    if watch.build_dataset and finished and (
+        regressed or not watch.dataset_on_regression_only
+    ):
+        try:
+            built = await build_dataset(finished, validator=watch.validator_model)
+            dataset = built.model_dump(mode="json") if built else None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("dataset build failed for %s: %s", run.run_id, exc)
+
+    watch.last_run_at_ms = int(time.time() * 1000)
+    watch.last_run_id = run.run_id
+    watch.last_score = report.get("overall_score")
+    watch.last_summary = regression.get("summary") or ""
+    ok = bool(finished and finished.status.value == "complete")
+    watch.consecutive_failures = 0 if ok else watch.consecutive_failures + 1
+    watch.schedule_next()
+    await store.save(watch)
+
+    if regressed:
+        log.warning("REGRESSION on %s: %s", watch.name, watch.last_summary)
+
+    return {
+        "watch_id": watch.watch_id,
+        "run_id": run.run_id,
+        "status": finished.status.value if finished else "unknown",
+        "score": watch.last_score,
+        "regressed": regressed,
+        "summary": watch.last_summary,
+        "focused_on": report.get("focused_on", []),
+        "dataset": dataset,
+        "next_due_ms": watch.next_due_ms,
+    }
+
+
+@app.post("/api/scheduled/tick")
+async def scheduled_tick() -> dict:
+    """Run every watch that is due. This is what Cloud Scheduler calls.
+
+    One scheduler job drives every watch, so adding a watch in the UI needs no
+    Google Cloud permissions and no new infrastructure.
+    """
+    due = await get_watch_store().due()
+    if not due:
+        return {"ran": 0, "results": [], "note": "nothing due"}
+
+    log.info("tick: %d watch(es) due", len(due))
+    results = []
+    for watch in due:
+        try:
+            results.append(await _execute_watch(watch))
+        except Exception as exc:  # noqa: BLE001 - one bad watch must not stop the rest
+            log.exception("watch %s failed", watch.watch_id)
+            results.append({"watch_id": watch.watch_id, "error": str(exc)})
+
+    return {
+        "ran": len(results),
+        "regressions": sum(1 for r in results if r.get("regressed")),
+        "results": results,
+    }
+
+
+@app.post("/api/scheduled/audit", status_code=202)
+async def scheduled_audit(body: ScheduledRunRequest, request: Request) -> dict:
+    """Run an audit with nobody watching.
+
+    Cloud Scheduler calls this on a cron. Unlike the interactive endpoint it
+    waits for the result, because the caller is a scheduler that wants to know
+    what happened -- and because the decision that matters (did this model get
+    worse?) can only be made once the run is finished.
+    """
+    _enforce_rate_limit(request)
+    try:
+        run = await start_run(RunConfig(**body.model_dump()))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    controller = ACTIVE.get(run.run_id)
+    if controller and controller.task:
+        try:
+            # Generous: a 6-probe run with follow-up rounds can take minutes.
+            await asyncio.wait_for(controller.task, timeout=1800)
+        except asyncio.TimeoutError:
+            controller.cancel()
+            raise HTTPException(
+                status_code=504,
+                detail="The scheduled audit did not finish within 30 minutes.",
+            ) from None
+
+    finished = await get_store().get(run.run_id)
+    report = (finished.report if finished else None) or {}
+    regression = report.get("regression") or {}
+
+    result = {
+        "run_id": run.run_id,
+        "status": finished.status.value if finished else "unknown",
+        "score": report.get("overall_score"),
+        "grade": report.get("grade"),
+        "weakest_dimension": report.get("weakest_dimension"),
+        "focused_on": report.get("focused_on", []),
+        "regressed": bool(regression.get("regressed")),
+        "summary": regression.get("summary"),
+        "baseline": regression.get("baseline"),
+        "delta": regression.get("delta"),
+    }
+
+    # Logged at warning so it stands out in Cloud Logging, which is where a
+    # scheduled run is actually observed from.
+    if result["regressed"]:
+        log.warning("REGRESSION %s: %s", body.target_model, result["summary"])
+    else:
+        log.info("scheduled audit %s: %s", body.target_model, result["summary"])
+
+    return result
+
+
+# --------------------------------------------------------------------------
 # live stream
 # --------------------------------------------------------------------------
 
@@ -684,3 +999,55 @@ async def _shutdown() -> None:
     # Managed model servers are our child processes; leaving them running
     # would hold gigabytes of memory after the API is gone.
     await stop_all_servers()
+
+
+# --------------------------------------------------------------------------
+# the dashboard
+# --------------------------------------------------------------------------
+
+# Serving the built UI from the same process means one Cloud Run service, one
+# URL, and no CORS to configure. Mounted last on purpose: FastAPI matches in
+# registration order, so every /api route above wins before this catch-all.
+#
+# Absent in development, where Vite serves the UI on its own port and proxies
+# /api here -- so this is skipped rather than failing.
+def _find_ui() -> Path | None:
+    """Locate the built dashboard.
+
+    Checked in order: an explicit override, the path baked into the container
+    image, and the dev build next to the repo. Finding it automatically means
+    `uvicorn app.main:app` serves the whole app locally, exactly as it does in
+    the deployed image.
+    """
+    candidates = []
+    override = os.environ.get("AUDITOR_UI_DIR")
+    if override:
+        candidates.append(Path(override))
+    candidates += [
+        Path("ui"),                                        # inside the image
+        Path(__file__).resolve().parents[2] / "frontend" / "dist",  # dev build
+    ]
+    for c in candidates:
+        if (c / "index.html").is_file():
+            return c
+    return None
+
+
+_UI_DIR = _find_ui()
+
+if _UI_DIR is not None:
+    # html=True serves index.html for "/" and falls back to it for unknown
+    # paths, which is what a single-page app needs.
+    app.mount("/", StaticFiles(directory=_UI_DIR, html=True), name="ui")
+    log.info("serving dashboard from %s", _UI_DIR.resolve())
+else:
+    @app.get("/")
+    async def _no_ui() -> dict:
+        """Explain the blank page rather than returning a bare 404."""
+        return {
+            "service": "auditor-api",
+            "dashboard": "not bundled in this image",
+            "hint": "The API is at /api/health. Build the dashboard with "
+                    "`cd frontend && npm run build` and restart, or run it "
+                    "separately with `npm run dev`.",
+        }

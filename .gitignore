@@ -1,14 +1,35 @@
-# python
+# --- secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.pem
+*-key.json
+service-account*.json
+**/google-api-key.bin
+
+# --- python ---
 backend/.venv/
 __pycache__/
 *.py[cod]
-.env
 *.egg-info/
+backend/requirements.lock.txt
 
-# node
+# --- node / build output ---
 node_modules/
 frontend/dist/
+desktop/dist/
+desktop/resources/
+desktop/.cache/
 
-# local
+# --- generated at runtime ---
+# Prepared models, uploads and training data live in AUDITOR_HOME, but guard
+# against them ever landing here.
+data/
+datasets/
+.auditor/
+
+# --- macOS / editor noise ---
 .DS_Store
 *.log
+* 2.*
+*.swp

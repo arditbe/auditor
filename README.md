@@ -1,38 +1,60 @@
 # Auditor
 
-Real-time validation for fine-tuned language models.
+An agent that audits your fine-tuned model — on its own, on a schedule.
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/arditbe/auditor/blob/main/notebooks/auditor_colab.ipynb)
 [![Run in the terminal](https://img.shields.io/badge/Run_in_the_terminal-%E2%80%BA_bash_scripts%2Fcolab.sh-1D6A7A?style=flat&logo=gnubash&logoColor=white)](#terminal--colab)
-[![Tests](https://img.shields.io/badge/tests-156_passing-2F6B4F?style=flat)](#)
+[![Tests](https://img.shields.io/badge/tests-206_passing-2F6B4F?style=flat)](#)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?style=flat&logo=python&logoColor=white)](#quick-start)
 
 **Colab** needs nothing but a free [Gemini API key](https://aistudio.google.com/apikey) — no install, no Google Cloud project.
 **Terminal** runs the same audit locally, against Ollama or your own endpoint.
 
 Point Auditor at a model. It writes its own test questions, puts them to the
-model one at a time, and has a second model score every answer against criteria
-it committed to *before* seeing the response. You watch the whole interrogation
-happen live, and get a report at the end.
+model one at a time, and has Gemini score every answer against criteria it
+committed to *before* seeing the response.
 
 Nothing is pre-scripted. There is no fixed benchmark to overfit to — the probe
 set is generated per run, for the model and the purpose you describe.
 
+Then it keeps going without you:
+
+- **It decides where to dig.** When a dimension scores badly, the agent writes
+  harder probes aimed at that weakness and runs those too. A 3-probe audit
+  becomes 9 because the agent judged it worth the effort.
+- **It decides whether to raise the alarm.** Each run is compared against the
+  last audit of the same model, and a real drop is told apart from judge noise.
+- **It fixes what it finds.** Every failure becomes a training example with a
+  corrected answer, written by the judge — a dataset you can fine-tune on.
+- **It runs while you sleep.** Schedule an audit hourly, daily or weekly and
+  nobody needs to open the dashboard again.
+
 ```
-┌─ browser ────────────┐   SSE    ┌─ Cloud Run ──────────────┐
-│ live transcript      │ ◀─────── │ FastAPI  ── orchestrator │
-│ meter bridge         │          │              │           │
-│ score / final report │ ──REST─▶ │        Google ADK        │
-└──────────────────────┘          │      ┌───────┴────────┐  │
-                                  │  probe generator   judge │
-                                  └───────┬────────────┬─────┘
-                                          │            │
-                              ┌───────────▼──┐   ┌─────▼──────────┐
-                              │ model under  │   │ validator:     │
-                              │ test (Ollama │   │ local Gemma or │
-                              │ or endpoint) │   │ Gemini/MedGemma│
-                              └──────────────┘   └────────────────┘
-                                          Firestore ◀── run history
+                    ┌──────────────────────────────────────┐
+   Cloud Scheduler ─┤  POST /api/scheduled/tick   (nightly)│
+                    └───────────────┬──────────────────────┘
+                                    │ which watches are due?
+   browser ──REST/SSE──┐            ▼
+                       ▼   ┌────────────────────────────────┐
+              ┌────────────┤   Cloud Run  ·  FastAPI        │
+              │ dashboard  │   orchestrator + watch loop    │
+              └────────────┤                                │
+                           │   ┌────────────────────────┐   │
+                           │   │      Google ADK        │   │
+                           │   │  probe generator       │   │
+                           │   │  judge                 │   │
+                           │   └──────────┬─────────────┘   │
+                           └──────────────┼─────────────────┘
+                                          │
+            ┌─────────────────────────────┼──────────────────────┐
+            ▼                             ▼                      ▼
+   ┌─────────────────┐        ┌────────────────────┐   ┌──────────────────┐
+   │ model under test│        │ Gemini 3.5 Flash   │   │    Firestore     │
+   │ Ollama · MLX    │        │ (Vertex AI, global)│   │ runs · watches   │
+   │ · HTTPS endpoint│        └────────────────────┘   └──────────────────┘
+   └─────────────────┘                                          │
+                                                                ▼
+                                                    training data (.jsonl/.csv)
 ```
 
 ## What it measures
@@ -98,16 +120,22 @@ responsive without spending the whole context window on one upload.
 
 ## Validators
 
-The dropdown picks which model does the judging. Local costs nothing; the
-Vertex AI options need `GOOGLE_CLOUD_PROJECT` set.
+Which model does the judging. The local option costs nothing; the Vertex AI
+ones need `GOOGLE_CLOUD_PROJECT` set, and the API-key ones need a free
+[AI Studio key](https://aistudio.google.com/apikey).
 
 | Option | Runs on | Cost |
 |---|---|---|
 | Local Gemma 3 (Ollama) | your machine | free |
-| Gemini 3 Flash | Vertex AI | paid |
-| Gemini 3 Pro | Vertex AI | paid |
-| Gemma 3 27B | Vertex AI | paid |
-| MedGemma 27B | Vertex AI | paid |
+| Gemini 3.5 Flash | Vertex AI | paid |
+| Gemini 3.1 Pro | Vertex AI | paid |
+| Gemini 3.5 Flash-Lite | Vertex AI | paid, cheapest |
+| Gemini 3.5 Flash / 3.1 Pro | AI Studio key | paid |
+
+> Gemma 3 27B and MedGemma are **not** offered. On Vertex they are not
+> serverless — they need a Model Garden endpoint you deploy and pay for by the
+> hour — so listing them would mean offering a button that always fails. The
+> local Gemma 3 judge is real Gemma and works out of the box.
 
 You can **switch validator mid-run**. Probes already scored keep their original
 judge, and the report records every validator that contributed. That is the
@@ -161,6 +189,59 @@ auditing works identically without it.
 > `mlx_lm` has its own `--export-gguf`, and Auditor deliberately does not use
 > it. In 0.31 it writes every tensor with shape `(0,)` — a silently empty
 > model. An auditing tool must never hand you a corrupt export.
+
+## Running on its own
+
+The dashboard is for watching one audit. A **watch** is a standing instruction:
+audit this model on a schedule, and tell me when it gets worse.
+
+Open **Scheduled** in the top bar and set what to audit, how often, and which
+Gemini model judges. From then on nobody has to open the app.
+
+| | |
+|---|---|
+| Cadence | hourly, daily or weekly, at a chosen UTC hour |
+| Regression | flagged when the score drops more than `REGRESSION_DROP` points |
+| Training data | built from the failures, optionally only when it regresses |
+
+Schedules live in Firestore rather than as individual Cloud Scheduler jobs.
+One scheduler job pings `/api/scheduled/tick` and the backend decides which
+watches are due. That way adding a watch needs no Google Cloud permissions and
+creates no infrastructure — and the same code runs off a plain cron entry.
+
+```bash
+# what Cloud Scheduler calls; safe to run by hand
+curl -X POST https://<your-service>/api/scheduled/tick
+```
+
+### What the agent decides for itself
+
+Given a weak result, it does not stop and wait to be asked:
+
+```
+[opening]  3 probes across dimensions
+>>> hallucination resistance scored 0.00/5 — going deeper
+[round 1]  3 harder probes, all hallucination
+>>> instruction following scored 1.00/5 — going deeper
+[round 2]  3 harder probes, all instruction following
+```
+
+Capped at `ADAPTIVE_MAX_ROUNDS` so a bad model cannot loop forever, and it
+never drills the same dimension twice.
+
+### Training data from failures
+
+Every failed probe becomes a training example whose completion is the answer
+the model *should* have given, written by the judge that failed it:
+
+```jsonl
+{"prompt": "Explain how the treaty signed at the 2021 Denver Peace Conference…",
+ "completion": "The premise of this question is incorrect. There was no 2021
+                Denver Peace Conference…"}
+```
+
+Two files per run: `.jsonl` for a trainer, `.csv` with the rejected answer and
+the reason it failed, so you can check the corrections before training on them.
 
 ## Terminal / Colab
 
@@ -268,13 +349,17 @@ All env vars, with defaults:
 | Variable | Default | Purpose |
 |---|---|---|
 | `GOOGLE_CLOUD_PROJECT` | — | Enables the Vertex AI validators |
-| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex region |
+| `GOOGLE_CLOUD_LOCATION` | `global` | Gemini 3.x is served only from the global endpoint |
 | `STORE_BACKEND` | `memory` | `firestore` to persist runs |
 | `FIRESTORE_COLLECTION` | `auditor_runs` | Collection name |
 | `OLLAMA_HOST` | `http://localhost:11434` | Local daemon |
 | `OLLAMA_KEEP_ALIVE` | `20m` | Keeps both models resident (see below) |
 | `TARGET_TIMEOUT_S` | `90` | A slower answer counts as a failed probe |
 | `PROBE_DELAY_S` | `0` | Pause between probes, to slow a live demo down |
+| `ADAPTIVE_PROBING` | `true` | Let the agent drill into weaknesses it finds |
+| `ADAPTIVE_THRESHOLD` | `3.0` | Score out of 5 below which a dimension is weak |
+| `ADAPTIVE_MAX_ROUNDS` | `2` | Follow-up rounds allowed per run |
+| `REGRESSION_DROP` | `10.0` | Points a score must fall to count as a regression |
 | `AUDITOR_HOME` | `~/.auditor` | Where prepared models and the registry live |
 | `LLAMA_CPP_PATH` | — | llama.cpp checkout, enables GGUF export |
 

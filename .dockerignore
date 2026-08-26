@@ -1,0 +1,17 @@
+# Never upload these to Cloud Build — they are large, secret, or rebuilt in
+# the image anyway.
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.env
+frontend/dist/
+backend/requirements.lock.txt
+desktop/
+notebooks/
+docs/
+asset/
+.git/
+.github/
+**/.DS_Store
+*.log

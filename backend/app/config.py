@@ -16,7 +16,12 @@ class Settings(BaseSettings):
 
     # --- Google Cloud ---
     google_cloud_project: str = ""
-    google_cloud_location: str = "us-central1"
+    # "global", not a region: Gemini 3.x is only served from the global
+    # endpoint. Regional endpoints list the models but 404 on generate.
+    google_cloud_location: str = "global"
+    # Model Garden models (Gemma, MedGemma) are served regionally, unlike
+    # Gemini 3.x which is global-only.
+    model_garden_location: str = "us-central1"
     # ADK reads this to route Gemini calls at Vertex AI instead of AI Studio.
     google_genai_use_vertexai: bool = True
 
@@ -34,6 +39,21 @@ class Settings(BaseSettings):
     # How long Ollama holds a model in memory after a request. Long enough that
     # the judge and the model under test both stay resident across a whole run.
     ollama_keep_alive: str = "20m"
+
+    # --- Autonomy ---
+    # After the first pass, the agent decides for itself whether any dimension
+    # is weak enough to be worth investigating, and writes more probes aimed
+    # at it. Nobody asks it to.
+    adaptive_probing: bool = True
+    # Mean score (out of 5) below which a dimension is judged weak.
+    adaptive_threshold: float = 3.0
+    # Follow-up rounds allowed, so a bad model cannot loop forever.
+    adaptive_max_rounds: int = 2
+    adaptive_probes_per_round: int = 3
+
+    # A run is a regression if it drops this many points against the last run
+    # of the same model.
+    regression_drop: float = 10.0
 
     # --- Run defaults ---
     default_num_probes: int = 8

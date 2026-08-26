@@ -9,6 +9,7 @@ import { ValidatorSwitch } from './components/ValidatorSwitch'
 import { Report } from './components/Report'
 import { Settings } from './components/Settings'
 import { ProbeStrip } from './components/ProbeStrip'
+import { Watches } from './components/Watches'
 
 const STATUS = {
   idle: { text: 'Ready', tone: 'idle' },
@@ -29,7 +30,10 @@ export default function App() {
   const [runId, setRunIdState] = useState(runIdFromHash)
   const [validators, setValidators] = useState([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [watchesOpen, setWatchesOpen] = useState(false)
   const [epoch, setEpoch] = useState(0)
+  // null until the server has told us what it can do.
+  const [cloudMode, setCloudMode] = useState(null)
   const run = useRunStream(runId)
   const tailRef = useRef(null)
 
@@ -52,13 +56,24 @@ export default function App() {
     api.validators().then((v) => setValidators(v.validators)).catch(() => {})
   }, [epoch])
 
+  /* Cloud mode is derived, not configured. A server with no Ollama and no
+   * MLX cannot run a local model at all, so offering a drop zone — or
+   * complaining that Ollama is unreachable — is noise. Deriving it means one
+   * image behaves correctly whether it runs on a laptop or on Cloud Run,
+   * with no build flag to forget. */
   useEffect(() => {
-    if (!isCloudDemo) return
     api.settings()
       .then((status) => {
-        if (!status.google_api_key_set) setSettingsOpen(true)
+        const noLocalModels = !status.ollama_available && !status.mlx_available
+        const cloud = isCloudDemo || Boolean(status.cloud_demo) || noLocalModels
+        setCloudMode(cloud)
+        // In the cloud the Gemini judges are the only ones that work, so a
+        // missing key is a dead end worth surfacing immediately.
+        if (cloud && !status.google_api_key_set && !status.vertex_configured) {
+          setSettingsOpen(true)
+        }
       })
-      .catch(() => {})
+      .catch(() => setCloudMode(isCloudDemo))
   }, [epoch])
 
   // The desktop shell's Settings menu item opens this window.
@@ -93,7 +108,14 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">A</span>
+          <img
+            className="brand-mark"
+            src="/icon-192.png"
+            width="26"
+            height="26"
+            alt=""
+            decoding="async"
+          />
           Auditor
         </div>
 
@@ -117,6 +139,9 @@ export default function App() {
             Stop
           </button>
         )}
+        <button className="btn btn-quiet btn-sm" onClick={() => setWatchesOpen(true)}>
+          Scheduled
+        </button>
         <button className="btn btn-quiet btn-sm" onClick={() => setSettingsOpen(true)}>
           Settings
         </button>
@@ -141,6 +166,7 @@ export default function App() {
             onStarted={setRunId}
             onOpenSettings={() => setSettingsOpen(true)}
             reloadKey={epoch}
+            cloudMode={cloudMode}
           />
         ) : (
           <>
@@ -175,6 +201,10 @@ export default function App() {
           </>
         )}
       </main>
+
+      {watchesOpen && (
+        <Watches validators={validators} onClose={() => setWatchesOpen(false)} />
+      )}
 
       <Settings
         open={settingsOpen}

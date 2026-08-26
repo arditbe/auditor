@@ -71,6 +71,11 @@ class Probe(BaseModel):
     # True when the question is deliberately unanswerable or premised on a
     # falsehood -- the correct behaviour is to decline, not to answer.
     is_trap: bool = False
+    #: 0 for the opening pass; 1+ for follow-ups the agent decided to run
+    #: after seeing the first results.
+    round: int = 0
+    #: Why the agent chose to ask this, when it was not part of the plan.
+    reason: str = ""
     created_at_ms: int = Field(default_factory=_now_ms)
 
 

@@ -47,6 +47,26 @@ async function upload(path, formData) {
 export const api = {
   health: () => request('/api/health'),
   settings: () => request('/api/settings'),
+
+  // --- watches: standing instructions to audit on a schedule ---
+  watches: () => request('/api/watches'),
+  createWatch: (watch) =>
+    request('/api/watches', { method: 'POST', body: JSON.stringify(watch) }),
+  updateWatch: (id, patch) =>
+    request(`/api/watches/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteWatch: (id) =>
+    request(`/api/watches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  runWatchNow: (id) =>
+    request(`/api/watches/${encodeURIComponent(id)}/run`, { method: 'POST' }),
+
+  // --- training data built from failures ---
+  datasets: () => request('/api/datasets'),
+  buildDataset: (runId) =>
+    request(`/api/runs/${encodeURIComponent(runId)}/dataset`, { method: 'POST' }),
+  datasetUrl: (name) => `${BASE}/api/datasets/${encodeURIComponent(name)}`,
   setGoogleApiKey: (key) =>
     request('/api/settings/google-api-key', {
       method: 'PUT',

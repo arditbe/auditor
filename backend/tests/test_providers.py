@@ -14,7 +14,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.providers import build_target  # noqa: E402
-from app.providers.http_endpoint import HttpEndpointTarget  # noqa: E402
+from app.providers.http_endpoint import (  # noqa: E402
+    HttpEndpointTarget,
+    resolve_request_url,
+)
 from app.providers.ollama import OllamaTarget, is_local_tag  # noqa: E402
 
 
@@ -82,3 +85,39 @@ class TestBuildTarget:
     async def test_spec_without_a_model_is_rejected(self):
         with pytest.raises(ValueError, match="Malformed target spec"):
             await build_target("ollama")
+
+
+class TestResolveRequestUrl:
+    """A pasted URL may be the API root or the completions route itself.
+
+    Appending blindly produced ".../completions.php/chat/completions", which
+    404s with nothing to explain why.
+    """
+
+    @pytest.mark.parametrize(
+        "given,expected",
+        [
+            # API roots: the route gets appended.
+            ("https://h/v1", "https://h/v1/chat/completions"),
+            ("https://h/v1/", "https://h/v1/chat/completions"),
+            ("http://localhost:8091/v1", "http://localhost:8091/v1/chat/completions"),
+            # Already the route: left alone.
+            ("https://h/v1/chat/completions", "https://h/v1/chat/completions"),
+            ("https://h/chat/completions.php", "https://h/chat/completions.php"),
+            ("https://h/v1/completions", "https://h/v1/completions"),
+            ("https://h/api/completions.cgi", "https://h/api/completions.cgi"),
+        ],
+    )
+    def test_resolution(self, given, expected):
+        assert resolve_request_url(given) == expected
+
+    def test_a_host_named_like_the_route_is_not_confused(self):
+        # "completions.example.com" is a host, not a completions endpoint.
+        assert resolve_request_url("https://completions.example.com") == (
+            "https://completions.example.com/chat/completions"
+        )
+
+    @pytest.mark.asyncio
+    async def test_target_uses_the_resolved_url(self):
+        target = await build_target("https://h/chat/completions.php")
+        assert target.request_url == "https://h/chat/completions.php"

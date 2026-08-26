@@ -63,6 +63,13 @@ def resolve_adk_model(spec: ValidatorSpec) -> str | LiteLlm:
         kwargs: dict[str, object] = {}
         if model_id.startswith("ollama_chat/"):
             kwargs["api_base"] = settings.ollama_host
+        elif model_id.startswith("vertex_ai/"):
+            # LiteLLM will not infer these from the environment the way the
+            # native path does, and fails with "project and location are
+            # required" without them. Model Garden models (Gemma, MedGemma)
+            # are regional, so "global" is not a valid home for them.
+            kwargs["vertex_project"] = settings.google_cloud_project
+            kwargs["vertex_location"] = settings.model_garden_location
         return LiteLlm(model=model_id, **kwargs)
 
     return spec.adk_model

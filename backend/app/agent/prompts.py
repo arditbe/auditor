@@ -157,3 +157,42 @@ MODEL'S ANSWER:
 {shown_answer}
 
 Score it. JSON only."""
+
+
+FOCUSED_INSTRUCTION_SUFFIX = """\
+
+This is a FOLLOW-UP round. An earlier pass already found this model weak on \
+one dimension, and your job now is to find out how deep that weakness goes.
+
+Write probes that ALL target the named dimension. Make them harder than a \
+first pass would be: if the model failed something simple, test whether it \
+fails a subtler version too, and whether the failure is systematic or a \
+one-off. Do not repeat the questions you are shown -- probe the same \
+weakness from a different angle.
+"""
+
+
+def focused_probe_prompt(
+    *,
+    dimension: str,
+    mean_score: float,
+    num_probes: int,
+    model_purpose: str,
+    target_spec: str,
+    asked: list[str],
+) -> str:
+    """Second-round probes, aimed at a weakness the agent found by itself."""
+    purpose = model_purpose.strip() or "Not stated."
+    already = "\n".join(f"- {q}" for q in asked[:8]) or "- (none)"
+    return f"""\
+Model under test: {target_spec}
+What it was tuned for: {purpose}
+
+The first pass scored this model {mean_score:.2f} out of 5 on **{dimension}**,
+which is weak. Investigate that weakness specifically.
+
+Questions already asked (do not repeat them):
+{already}
+
+Generate exactly {num_probes} harder probes, all with "dimension": "{dimension}".
+JSON only."""
