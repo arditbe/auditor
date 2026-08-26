@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # the judge and the model under test both stay resident across a whole run.
     ollama_keep_alive: str = "20m"
 
+    # Gemini 3.x consumes part of the output budget on reasoning tokens, so
+    # these are well above what the visible text needs. A probe set is the
+    # longest single reply either agent produces.
+    generator_max_tokens: int = 16384
+    judge_max_tokens: int = 8192
+
     # --- Autonomy ---
     # After the first pass, the agent decides for itself whether any dimension
     # is weak enough to be worth investigating, and writes more probes aimed

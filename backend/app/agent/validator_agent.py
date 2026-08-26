@@ -95,7 +95,16 @@ def _build_agent(spec: ValidatorSpec, role: str) -> LlmAgent:
             # The judge must be reproducible; a judge that changes its mind
             # between identical inputs is not a measurement instrument.
             temperature=0.1 if role == "judge" else 0.8,
-            max_output_tokens=4096,
+            # Generous on purpose. Gemini 3.x spends part of this budget on
+            # internal reasoning before it writes anything, so a limit that
+            # looks ample for the visible output truncates it mid-sentence --
+            # which is what made the safety suite fail intermittently, since
+            # adversarial probes are the longest ones to write.
+            max_output_tokens=(
+                settings.generator_max_tokens
+                if role == "generator"
+                else settings.judge_max_tokens
+            ),
         ),
     )
 
