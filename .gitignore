@@ -33,3 +33,7 @@ datasets/
 *.log
 * 2.*
 *.swp
+
+# editor backups
+*.save
+*~
